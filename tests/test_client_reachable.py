@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from kettle_cli import client as client_mod
-from kettle_cli.client import KettleClient
+from kettle_tui import client as client_mod
+from kettle_tui.client import KettleClient
 
 
 def _free_port() -> int:

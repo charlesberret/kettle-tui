@@ -14,7 +14,7 @@ Research notes: [`.local/`](.local/)
 Core server should be up (or use demo mode):
 
 ```sh
-cd ~/cloud/git-projects/kettle-cli
+cd ~/cloud/git-projects/kettle-tui
 python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/kettle-tui --project armada   # live
 .venv/bin/kettle-tui --demo             # offline

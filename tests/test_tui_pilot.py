@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
-from kettle_cli.app import ConfirmActionModal, KettleTui
-from kettle_cli.client import KettleClient
+from kettle_tui.app import ConfirmActionModal, KettleTui
+from kettle_tui.client import KettleClient
 
 
 def _app() -> KettleTui:

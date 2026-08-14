@@ -1,4 +1,4 @@
-"""Pure-logic tests for kettle_cli.client helpers (LAB-58 pilot suite).
+"""Pure-logic tests for kettle_tui.client helpers (LAB-58 pilot suite).
 
 No network, no TUI — just the queue/phase/ritual functions that the viewport
 and the web app must agree on.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from kettle_cli.client import (
+from kettle_tui.client import (
     default_project_id,
     founding_steps,
     normalize_phase,

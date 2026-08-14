@@ -7,7 +7,7 @@ entirely in-memory, never touching the network.
 
 from __future__ import annotations
 
-from kettle_cli.client import KettleClient, normalize_phase
+from kettle_tui.client import KettleClient, normalize_phase
 
 
 def _client() -> KettleClient:
