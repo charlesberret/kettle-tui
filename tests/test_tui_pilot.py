@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from kettle_cli.app import KettleTui
+from kettle_cli.app import ConfirmActionModal, KettleTui
 from kettle_cli.client import KettleClient
 
 
@@ -107,5 +107,45 @@ def test_compact_streams_and_settles():
                 lambda: consumed["n"] > 0 and app.state.streaming is False,
             )
             assert ok, f"compact did not complete (consumed={consumed['n']})"
+
+    asyncio.run(run())
+
+
+def test_post_found_selects_a_content_entry():
+    """LAB-53: after founding, an entry is auto-selected (proposal is gone)."""
+
+    async def run():
+        app = KettleTui(KettleClient(demo_mode=True), project_id="new-desk")
+        async with app.run_test(size=(120, 40)) as pilot:
+            # new-desk boots unfounded
+            assert await _settle(pilot, lambda: app.state.phase == "none")
+
+            await pilot.press("i")  # begin founding interview
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "interviewing" and not app.state.streaming,
+            )
+
+            await pilot.press("d")  # draft proposal → confirm modal
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "proposing" and not app.state.streaming,
+            )
+            assert app.state.selected_id == "desk-proposal"
+
+            app.action_found_desk()  # found → confirm modal (no key binding)
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "founded" and not app.state.streaming,
+            )
+
+            # Post-found: proposal is gone; a real content entry is selected.
+            assert app.state.selected_id not in (None, "desk-proposal")
+            ids = {str(e.get("id")) for e in app.state.entries}
+            assert str(app.state.selected_id) in ids
 
     asyncio.run(run())
