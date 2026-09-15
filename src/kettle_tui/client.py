@@ -595,7 +595,61 @@ class KettleClient:
         return host
 
 
-def default_project_id(projects: list[dict[str, Any]], preferred: str | None = None) -> str | None:
+def resolve_project_root(root: Any) -> Path | None:
+    """Absolute path of a registry `root`, or None if it cannot be resolved."""
+    if not root:
+        return None
+    try:
+        return Path(str(root)).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def match_project_here(
+    projects: list[dict[str, Any]],
+    here: str | Path | None = None,
+) -> str | None:
+    """Id of the registered desk whose root is `here` or an ancestor of it.
+
+    Longest root wins so a nested desk beats a parent tree. A directory *above*
+    a desk does not match — that is a different place, not that project.
+    """
+    try:
+        here_p = Path(here or os.getcwd()).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    best_id: str | None = None
+    best_len = -1
+    for p in projects:
+        root = resolve_project_root(p.get("root"))
+        if root is None:
+            continue
+        try:
+            here_p.relative_to(root)
+        except ValueError:
+            continue
+        n = len(root.parts)
+        if n > best_len:
+            best_len = n
+            pid = p.get("id")
+            best_id = str(pid) if pid else None
+    return best_id
+
+
+def default_project_id(
+    projects: list[dict[str, Any]],
+    preferred: str | None = None,
+    *,
+    here: str | Path | None = None,
+    require_here: bool = False,
+) -> str | None:
+    """Pick a desk id.
+
+    Order: ``--project`` / preferred id, then ``KETTLE_PROJECT``, then the
+    registered root that contains ``here`` (cwd when omitted). With
+    ``require_here`` (``kettle-tui --here``) a miss stays unbound — do not
+    silently open some other project's sitting.
+    """
     if preferred:
         for p in projects:
             if p.get("id") == preferred:
@@ -605,6 +659,11 @@ def default_project_id(projects: list[dict[str, Any]], preferred: str | None = N
         for p in projects:
             if p.get("id") == env:
                 return env
+    matched = match_project_here(projects, here)
+    if matched:
+        return matched
+    if require_here:
+        return None
     return projects[0]["id"] if projects else None
 
 

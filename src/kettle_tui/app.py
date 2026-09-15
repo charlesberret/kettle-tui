@@ -1008,10 +1008,14 @@ class KettleTui(App[None]):
         client: KettleClient,
         *,
         project_id: str | None = None,
+        here: str | None = None,
+        require_here: bool = False,
     ) -> None:
         super().__init__()
         self.client = client
         self._preferred_project = project_id
+        self._here = here
+        self._require_here = require_here
         self.state = DeskState()
         self.queue_width = QUEUE_W_DEFAULT
         self.desk_width = DESK_W_DEFAULT
@@ -1092,7 +1096,12 @@ class KettleTui(App[None]):
                 )
             ping = self.client.ping()
             projects = self.client.projects()
-            pid = default_project_id(projects, self._preferred_project)
+            pid = default_project_id(
+                projects,
+                self._preferred_project,
+                here=self._here,
+                require_here=self._require_here,
+            )
             entries: list[dict[str, Any]] = []
             iv: dict[str, Any] | None = None
             if pid:
@@ -1358,6 +1367,16 @@ class KettleTui(App[None]):
             for e in self.state.entries
             if (e.get("status") or "pending") == "pending"
         )
+        if self._require_here and not self.state.project_id:
+            loc = self._here or os.getcwd()
+            try:
+                loc = str(Path(loc).expanduser().resolve())
+            except (OSError, RuntimeError):
+                loc = str(loc)
+            home = str(Path.home())
+            if loc.startswith(home + os.sep):
+                loc = "~" + loc[len(home) :]
+            bits.append(f"no desk for {loc}")
         if self.state.phase != "founded":
             bits.append(f"[#cba6f7]{self.state.phase}[/]")
         bits.append(f"{pending}/{len(self.state.entries)} pending")

@@ -1,0 +1,36 @@
+id = "kettle-tui"
+name = "kettle"
+version = "0.0.1"
+min_herdr_version = "0.9.0"
+description = "Open a Kettle review sitting as a Herdr tab for this directory."
+platforms = ["linux", "macos"]
+
+# The sitting is a full three-column TUI. A split pane is too tight; a tab
+# is the sitting, same as cowbell's rule for agent work.
+
+[[panes]]
+id = "sitting"
+title = "kettle"
+placement = "tab"
+# Pane cwd is the desk directory (herdr --cwd), not the plugin root, so the
+# script must be reached via HERDR_PLUGIN_ROOT (see persiyanov.reviewr).
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/herdr/run-sitting.sh\""]
+
+[[actions]]
+id = "open"
+title = "kettle: sitting for this directory"
+description = "Open or focus a Kettle sitting bound to this pane's directory."
+contexts = ["global", "pane", "workspace"]
+command = ["bash", "herdr/open.sh"]
+
+[[actions]]
+id = "install-keys"
+title = "kettle: bind prefix+k"
+contexts = ["global"]
+command = ["bash", "herdr/open.sh", "keys", "install"]
+
+[[actions]]
+id = "uninstall-keys"
+title = "kettle: unbind prefix+k"
+contexts = ["global"]
+command = ["bash", "herdr/open.sh", "keys", "uninstall"]

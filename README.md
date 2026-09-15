@@ -16,10 +16,25 @@ Core server should be up (or use demo mode):
 ```sh
 cd ~/cloud/git-projects/kettle-tui
 python3 -m venv .venv && .venv/bin/pip install -e .
-.venv/bin/kettle-tui --project armada   # live
+.venv/bin/kettle-tui --here             # desk for this directory
+.venv/bin/kettle-tui --project armada   # live, named desk
 .venv/bin/kettle-tui --demo             # offline
-.venv/bin/kettle-tui --check            # no TUI
+.venv/bin/kettle-tui --check --here     # no TUI; exit 1 if this dir has no desk
 ```
+
+`--here` binds to the registered desk whose `root` is this directory (or an ancestor). It does not fall back to some other project.
+
+## Herdr
+
+A sitting belongs in a **tab** on the directory you are already working in — not a cowbell harness (those raise agents).
+
+```sh
+herdr plugin link ~/cloud/git-projects/kettle-tui
+herdr plugin action invoke kettle-tui.install-keys   # prefix+k
+herdr server reload-config
+```
+
+`prefix+k` (or the action **kettle: sitting for this directory**) opens a tab running `kettle-tui --here` at the focused pane's cwd. A second press focuses the existing sitting for that place.
 
 ## Keys
 
