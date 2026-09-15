@@ -32,6 +32,16 @@ def test_queue_returns_entries_for_a_founded_desk():
     assert q["entries"], "founded demo desk should have queue entries"
 
 
+def test_approve_proposal_sets_founding_true():
+    c = _client()
+    list(c.interview_events("new-desk", ""))
+    list(c.propose_events("new-desk"))
+    res = c.approve("new-desk", "desk-proposal")
+    assert res.get("founding") is True
+    content = c.approve("demo-desk", c.queue("demo-desk")["entries"][0]["id"])
+    assert content.get("founding") is not True
+
+
 def test_approve_marks_entry_approved():
     c = _client()
     entry_id = c.queue("demo-desk")["entries"][0]["id"]

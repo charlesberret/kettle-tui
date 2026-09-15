@@ -52,6 +52,7 @@ from .client import (
     KettleClient,
     default_project_id,
     founding_steps,
+    is_missing_project_folder,
     normalize_phase,
     ritual_controls,
     sort_queue,
@@ -293,6 +294,9 @@ class EditorPane(Vertical):
         ta = self.query_one("#editor", TextArea)
         ta.load_text(text)
         ta.read_only = read_only
+
+    def set_read_only(self, read_only: bool) -> None:
+        self.query_one("#editor", TextArea).read_only = read_only
 
     def get_text(self) -> str:
         return self.query_one("#editor", TextArea).text
@@ -1110,10 +1114,18 @@ class KettleTui(App[None]):
                     q = self.client.queue(str(pid), mutate=False)
                     entries = sort_queue(list(q.get("entries") or []))
                 except ClientError as e:
-                    if e.code != "queue_corrupt":
+                    if is_missing_project_folder(e):
+                        try:
+                            projects = self.client.projects()
+                        except ClientError:
+                            pass
+                        entries = []
+                        err = str(e)
+                    elif e.code != "queue_corrupt":
                         raise
-                    entries = []
-                    err = str(e)
+                    else:
+                        entries = []
+                        err = str(e)
                 try:
                     iv = self.client.interview_status(str(pid))
                 except ClientError as e:
@@ -1144,25 +1156,45 @@ class KettleTui(App[None]):
         self.call_from_thread(apply)
 
     @work(exclusive=True, thread=True)
-    def load_queue_only(self) -> None:
+    def load_queue_only(self, heal_founding: bool = False) -> None:
         pid = self.state.project_id
         if not pid:
             return
+        projects = self.state.projects
+        folder_gone = False
         try:
             q = self.client.queue(pid, mutate=False)
             entries = sort_queue(list(q.get("entries") or []))
             try:
-                iv = self.client.interview_status(pid)
-            except ClientError:
+                iv = self.client.interview_status(pid, mutate=heal_founding)
+            except ClientError as e:
+                if is_missing_project_folder(e):
+                    raise
                 iv = self.state.interview_status
             err = None
         except ClientError as e:
-            if e.code == "queue_corrupt":
-                entries, iv, err = self.state.entries, self.state.interview_status, str(e)
+            if is_missing_project_folder(e):
+                folder_gone = True
+                try:
+                    projects = self.client.projects()
+                except ClientError:
+                    pass
+                entries, iv, err = [], self.state.interview_status, str(e)
             else:
                 entries, iv, err = self.state.entries, self.state.interview_status, str(e)
 
         def apply() -> None:
+            self.state.projects = projects
+            if folder_gone:
+                ids = {p.get("id") for p in projects}
+                self.state.error = err
+                if pid not in ids:
+                    self.state.project_id = None
+                    self.state.entries = []
+                    self.state.selected_id = None
+                    self._paint_empty_entry()
+                    self._paint_shell()
+                    return
             sel = self.state.selected_id
             ids = {e.get("id") for e in entries}
             if sel not in ids:
@@ -1373,6 +1405,9 @@ class KettleTui(App[None]):
         else:
             d = self.client.discovery
             bits.append(d.url.replace("http://", ""))
+        ping = self.state.ping
+        if isinstance(ping, dict) and ping.get("api_version") is not None:
+            bits.append(f"api {ping.get('api_version')}")
         pending = sum(
             1
             for e in self.state.entries
@@ -1432,11 +1467,7 @@ class KettleTui(App[None]):
 
     @on(Button.Pressed, "#btn-approve")
     def on_approve_btn(self) -> None:
-        # Proposing: Approve = Found Desk (same as web)
-        if self.state.phase == "proposing":
-            self.action_found_desk()
-        else:
-            self.action_approve()
+        self.action_approve()
 
     @on(Button.Pressed, "#btn-comment")
     def on_comment_btn(self) -> None:
@@ -1474,7 +1505,8 @@ class KettleTui(App[None]):
 
     def action_refresh(self) -> None:
         self.notify("refreshing…", timeout=1)
-        self.load_queue_only()
+        # D1: one mutating interview read on explicit refresh of an unfounded desk.
+        self.load_queue_only(heal_founding=self.state.phase != "founded")
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
@@ -1617,6 +1649,7 @@ class KettleTui(App[None]):
             style="dim",
         )
         self.state.streaming = True
+        self.query_one(EditorPane).set_read_only(True)
         self._paint_ritual()
         self._paint_status()
         self._sweep_worker(pid, thrust)
@@ -1625,23 +1658,7 @@ class KettleTui(App[None]):
     def _sweep_worker(self, pid: str, thrust: str) -> None:
         try:
             for ev in self.client.sweep_events(pid, thrust=thrust):
-                t = ev.get("t")
-                if t == "text" and isinstance(ev.get("s"), str):
-                    chunk = ev["s"]
-
-                    def write_chunk(c: str = chunk) -> None:
-                        self.query_one(DeskPane).stream_write(
-                            c.rstrip("\n") if c.endswith("\n") else c
-                        )
-
-                    self.call_from_thread(write_chunk)
-                elif t in ("err", "error"):
-                    msg = str(ev.get("s") or ev.get("error") or ev)
-
-                    def write_err(m: str = msg) -> None:
-                        self.query_one(DeskPane).stream_write(m, style="#e06c75")
-
-                    self.call_from_thread(write_err)
+                self._relay_ndjson_event(ev)
             err = None
         except ClientError as e:
             err = str(e)
@@ -1657,6 +1674,7 @@ class KettleTui(App[None]):
 
         def done() -> None:
             self.state.streaming = False
+            self.query_one(EditorPane).set_read_only(self.state.view_mode == "diff")
             if err:
                 self.query_one(DeskPane).stream_write(
                     f"sweep error: {err}", style="#e06c75"
@@ -1669,15 +1687,7 @@ class KettleTui(App[None]):
                 )
             else:
                 self.state.entries = entries
-                # Drop selection if archived
-                if self.state.selected_id and not any(
-                    str(e.get("id")) == str(self.state.selected_id) for e in entries
-                ):
-                    self.state.selected_id = None
-                    self.state.file_path = None
-                    self.state.file_loaded = ""
-                    self.state.dirty = False
-                    self._paint_empty_entry()
+                self._reselect_after_restock(entries)
                 self.query_one(QueuePane).entries = list(entries)
                 pending = [
                     e
@@ -1700,10 +1710,30 @@ class KettleTui(App[None]):
                         style="dim",
                     )
             self._paint_shell()
+            if self.state.selected_id:
+                self.load_entry(str(self.state.selected_id))
+            else:
+                self._paint_empty_entry()
             self._paint_status()
             self.notify("sweep finished" if not err else "sweep failed", timeout=2)
 
         self.call_from_thread(done)
+
+    def _reselect_after_restock(self, entries: list[dict[str, Any]]) -> None:
+        """Keep the open entry if it survived restock; otherwise first pending."""
+        ids = {str(e.get("id")) for e in entries}
+        cur = str(self.state.selected_id) if self.state.selected_id else ""
+        if cur and cur in ids:
+            return
+        pending = [
+            e for e in entries if (e.get("status") or "pending") == "pending"
+        ]
+        pick = pending[0] if pending else (entries[0] if entries else None)
+        self.state.selected_id = pick.get("id") if pick else None
+        if not self.state.selected_id:
+            self.state.file_path = None
+            self.state.file_loaded = ""
+            self.state.dirty = False
 
     def action_toggle_diff(self) -> None:
         entry = self._selected()
@@ -1717,6 +1747,9 @@ class KettleTui(App[None]):
 
     def action_external_editor(self) -> None:
         """Open current file in $VISUAL / $EDITOR (git-commit style)."""
+        if self.state.streaming:
+            self.notify("wait for the stream to finish", severity="warning")
+            return
         if self.state.view_mode == "diff":
             self.notify("switch to file view first", severity="warning")
             return
@@ -1860,6 +1893,9 @@ class KettleTui(App[None]):
         self.call_from_thread(apply)
 
     def action_save(self) -> None:
+        if self.state.streaming:
+            self.notify("wait for the stream to finish", severity="warning")
+            return
         if self.state.view_mode == "diff":
             self.notify("diff is read-only", severity="warning")
             return
@@ -1902,14 +1938,16 @@ class KettleTui(App[None]):
         self.call_from_thread(apply)
 
     def action_approve(self) -> None:
-        if self.state.phase == "proposing":
-            self.action_found_desk()
-            return
         entry = self._selected()
         pid = self.state.project_id
         if not entry or not pid:
             return
-        if _is_approved(entry):
+        if self.state.streaming:
+            self.notify("already streaming", severity="warning")
+            return
+        if _is_approved(entry) and not (
+            entry.get("id") == "desk-proposal" or entry.get("founding_phase") == "proposal"
+        ):
             self.notify("already approved", timeout=1.5)
             return
         self._approve_worker(pid, str(entry.get("id")))
@@ -1965,23 +2003,32 @@ class KettleTui(App[None]):
         def on_confirm(choice: str | None) -> None:
             if choice != "ok":
                 return
-            # Bookmark proposal if selected
             entry = self._selected()
-            if entry and (
+            if not entry or not (
                 entry.get("id") == "desk-proposal"
                 or entry.get("founding_phase") == "proposal"
             ):
-                try:
-                    if not _is_approved(entry):
-                        self.client.approve(pid, str(entry.get("id")))
-                except ClientError:
-                    pass
-            desk = self.query_one(DeskPane)
-            desk.stream_write("— founding desk —", style="#cba6f7")
-            self.state.streaming = True
-            self._paint_ritual()
-            self._paint_status()
-            self._found_worker(pid)
+                entry = next(
+                    (
+                        e
+                        for e in self.state.entries
+                        if e.get("id") == "desk-proposal"
+                        or e.get("founding_phase") == "proposal"
+                    ),
+                    None,
+                )
+            if not entry:
+                self.notify("need a desk proposal first", severity="warning")
+                return
+            try:
+                res = self.client.approve(pid, str(entry.get("id")))
+            except ClientError as e:
+                self.notify(f"approve failed: {e}", severity="error")
+                return
+            if res.get("founding") is not True:
+                self.notify("approve was not a founding bookmark", severity="warning")
+                return
+            self._begin_found_stream(pid)
 
         self.push_screen(
             ConfirmActionModal("Found this desk?", "", ok_label="found desk"),
@@ -2109,13 +2156,21 @@ class KettleTui(App[None]):
 
             self.call_from_thread(write_done_err)
 
+    def _begin_found_stream(self, pid: str) -> None:
+        desk = self.query_one(DeskPane)
+        desk.stream_write("— founding desk —", style="#cba6f7")
+        self.state.streaming = True
+        self._paint_ritual()
+        self._paint_status()
+        self._found_worker(pid)
+
     @work(thread=True)
     def _approve_worker(self, pid: str, eid: str) -> None:
         try:
-            self.client.approve(pid, eid)
+            res = self.client.approve(pid, eid)
             err = None
         except ClientError as e:
-            err = str(e)
+            res, err = {}, str(e)
 
         def apply() -> None:
             if err:
@@ -2125,6 +2180,19 @@ class KettleTui(App[None]):
                 if str(e.get("id")) == eid:
                     e["status"] = "approved"
                     break
+            if res.get("founding") is True:
+                def on_confirm(choice: str | None) -> None:
+                    if choice != "ok":
+                        self._paint_ritual()
+                        self._paint_status()
+                        return
+                    self._begin_found_stream(pid)
+
+                self.push_screen(
+                    ConfirmActionModal("Found this desk?", "", ok_label="found desk"),
+                    on_confirm,
+                )
+                return
             self.state.entries = sort_queue(self.state.entries)
             self.query_one(QueuePane).entries = list(self.state.entries)
             self._paint_ritual()
@@ -2202,23 +2270,7 @@ class KettleTui(App[None]):
     def _chat_worker(self, pid: str, message: str, eid: str | None) -> None:
         try:
             for ev in self.client.chat_events(pid, message, entry_id=eid):
-                t = ev.get("t")
-                if t == "text" and isinstance(ev.get("s"), str):
-                    chunk = ev["s"]
-
-                    def write_chunk(c: str = chunk) -> None:
-                        self.query_one(DeskPane).stream_write(
-                            c.rstrip("\n") if c.endswith("\n") else c
-                        )
-
-                    self.call_from_thread(write_chunk)
-                elif t in ("err", "error"):
-                    msg = str(ev.get("s") or ev.get("error") or ev)
-
-                    def write_err(m: str = msg) -> None:
-                        self.query_one(DeskPane).stream_write(m, style="#e06c75")
-
-                    self.call_from_thread(write_err)
+                self._relay_ndjson_event(ev)
             err = None
         except ClientError as e:
             err = str(e)

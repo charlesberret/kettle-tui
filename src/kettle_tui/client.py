@@ -59,6 +59,14 @@ class ClientError(Exception):
         return " ".join(bits)
 
 
+def is_missing_project_folder(err: ClientError) -> bool:
+    """404 from core when the desk root was moved or deleted."""
+    if err.code != "not_found" and err.status != 404:
+        return False
+    msg = (err.message or "").lower()
+    return "folder is missing" in msg or "moved or deleted" in msg
+
+
 def load_discovery(explicit_url: str | None = None) -> Discovery:
     if explicit_url:
         return Discovery(
@@ -185,8 +193,13 @@ class KettleClient:
         )
         return self._get(f"/api/queue?{qs}")
 
-    def interview_status(self, project_id: str) -> dict[str, Any]:
-        """Founding phase beacon — mirrors GET /api/interview."""
+    def interview_status(self, project_id: str, *, mutate: bool = False) -> dict[str, Any]:
+        """Founding phase beacon — mirrors GET /api/interview.
+
+        Polling stays ``mutate=0`` (decision D1). Pass ``mutate=True`` on an
+        explicit refresh of an unfounded desk so core can re-file a lost
+        proposal entry as a safety net.
+        """
         if self.demo_mode:
             phase = self._demo_phases.get(project_id, "founded")
             entries = self._demo_queues.get(project_id) or []
@@ -220,7 +233,9 @@ class KettleClient:
                 "has_proposal": has_proposal,
                 "proposal_path": demo.PROPOSAL_PATH,
             }
-        qs = urllib.parse.urlencode({"project": project_id, "mutate": "0"})
+        qs = urllib.parse.urlencode(
+            {"project": project_id, "mutate": "1" if mutate else "0"}
+        )
         return self._get(f"/api/interview?{qs}")
 
     def file_text(self, project_id: str, path: str) -> str:
@@ -333,7 +348,13 @@ class KettleClient:
             from datetime import date
 
             e["approved"] = date.today().isoformat()
-            return {"ok": True, "status": "approved"}
+            out: dict[str, Any] = {"ok": True, "status": "approved"}
+            proposal = (
+                e.get("id") == "desk-proposal" or e.get("founding_phase") == "proposal"
+            )
+            if proposal and self._demo_phases.get(project_id) != "founded":
+                out["founding"] = True
+            return out
         return self._post("/api/approve", {"project": project_id, "id": entry_id})
 
     def comment(self, project_id: str, entry_id: str, text: str) -> dict[str, Any]:

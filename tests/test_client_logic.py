@@ -12,6 +12,7 @@ from kettle_tui.client import (
     ClientError,
     default_project_id,
     founding_steps,
+    is_missing_project_folder,
     normalize_phase,
     ritual_controls,
     sort_queue,
@@ -120,6 +121,18 @@ def test_client_error_queue_corrupt_is_desk_local():
 def test_client_error_busy_asks_to_wait():
     err = ClientError(message="curator turn in flight", code="busy", status=409)
     assert "wait" in str(err).lower()
+
+
+def test_missing_project_folder_detects_core_copy():
+    err = ClientError(
+        message="project folder is missing: /tmp/gone — was it moved or deleted?",
+        code="not_found",
+        status=404,
+    )
+    assert is_missing_project_folder(err)
+    assert not is_missing_project_folder(
+        ClientError(message="unknown entry id: x", code="not_found", status=404)
+    )
 
 
 # ── ritual_controls ─────────────────────────────────────────────────────

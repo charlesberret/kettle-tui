@@ -188,7 +188,7 @@ def test_found_without_charter_keeps_proposing():
             app.client.found_events = fake_found  # type: ignore[assignment]
             orig_iv = app.client.interview_status
 
-            def iv_no_charter(pid: str):
+            def iv_no_charter(pid: str, **_kw):
                 data = orig_iv(pid)
                 data["founded"] = False
                 data["has_charter"] = False
@@ -204,5 +204,38 @@ def test_found_without_charter_keeps_proposing():
             await pilot.press("y")
             assert await _settle(pilot, lambda: not app.state.streaming)
             assert app.state.phase == "proposing"
+
+    asyncio.run(run())
+
+
+def test_approve_founding_true_opens_found_confirm():
+    """D3: Approve reads founding:true from the response, not local phase."""
+
+    async def run():
+        app = KettleTui(KettleClient(demo_mode=True), project_id="new-desk")
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: app.state.phase == "none")
+            await pilot.press("i")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "interviewing" and not app.state.streaming,
+            )
+            await pilot.press("d")
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "proposing" and not app.state.streaming,
+            )
+            # Local phase is proposing, but the fork must be the approve response.
+            app.state.phase = "founded"
+            app.action_approve()
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "founded" and not app.state.streaming,
+            )
+            assert app.state.selected_id not in (None, "desk-proposal")
 
     asyncio.run(run())
