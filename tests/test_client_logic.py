@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from kettle_tui.client import (
+    ClientError,
     default_project_id,
     founding_steps,
     normalize_phase,
@@ -82,19 +83,43 @@ def test_sort_queue_stable_and_nondestructive():
 @pytest.mark.parametrize(
     "status,expected",
     [
-        (None, "founded"),
-        ({"has_entries": True}, "founded"),
+        (None, "none"),
+        ({"has_entries": True}, "none"),  # entries without charter are not founded
+        ({"has_entries": True, "founded": False, "status": "proposing"}, "proposing"),
+        ({"has_entries": True, "founded": True}, "founded"),
         ({"status": "interviewing"}, "interviewing"),
         ({"status": "proposing"}, "proposing"),
         ({"status": "none"}, "none"),
         ({"status": "none", "has_proposal": True}, "proposing"),
         ({"status": "weird"}, "none"),
         ({"status": "weird", "has_proposal": True}, "proposing"),
-        ({"status": "founded"}, "founded"),
+        ({"status": "founded"}, "founded"),  # legacy core: no boolean, trust status
+        ({"status": "founded", "founded": False, "has_proposal": True}, "proposing"),
     ],
 )
 def test_normalize_phase(status, expected):
     assert normalize_phase(status) == expected
+
+
+def test_client_error_curator_unavailable_points_at_doctor():
+    err = ClientError(
+        message="claude: command not found",
+        code="curator_unavailable",
+        status=500,
+    )
+    text = str(err)
+    assert "kettle doctor" in text
+    assert "(curator_unavailable)" in text
+
+
+def test_client_error_queue_corrupt_is_desk_local():
+    err = ClientError(message="queue.json is not valid JSON", code="queue_corrupt", status=409)
+    assert "this desk only" in str(err)
+
+
+def test_client_error_busy_asks_to_wait():
+    err = ClientError(message="curator turn in flight", code="busy", status=409)
+    assert "wait" in str(err).lower()
 
 
 # ── ritual_controls ─────────────────────────────────────────────────────

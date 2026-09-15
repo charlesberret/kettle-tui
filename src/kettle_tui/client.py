@@ -44,7 +44,14 @@ class ClientError(Exception):
     status: int | None = None
 
     def __str__(self) -> str:
-        bits = [self.message]
+        msg = self.message
+        if self.code == "curator_unavailable" and "kettle doctor" not in msg.lower():
+            msg = f"{msg} — run kettle doctor"
+        elif self.code == "queue_corrupt":
+            msg = f"{msg} (this desk only; queue.json was not overwritten)"
+        elif self.code == "busy":
+            msg = f"{msg} — wait for the current turn to finish"
+        bits = [msg]
         if self.code:
             bits.append(f"({self.code})")
         if self.status:
@@ -193,8 +200,8 @@ class KettleClient:
                 e.get("id") == "desk-proposal" or e.get("founding_phase") == "proposal"
                 for e in entries
             ) or phase == "proposing"
-            # Map to API status field
-            if content or phase == "founded":
+            # Map to API status field. Content entries do not found the desk.
+            if phase == "founded":
                 status = "founded"
             elif phase == "proposing" or has_proposal:
                 status = "proposing"
@@ -202,8 +209,11 @@ class KettleClient:
                 status = "interviewing"
             else:
                 status = "none"
+            founded = status == "founded"
             return {
                 "status": status,
+                "founded": founded,
+                "has_charter": founded,
                 "has_session": phase in ("interviewing", "proposing", "founded"),
                 "has_entries": bool(content),
                 "entry_count": len(content),
@@ -504,6 +514,32 @@ class KettleClient:
     def _post(self, path: str, body: dict | None = None) -> dict[str, Any]:
         return self._request_json("POST", path, body)
 
+    def _reload_discovery(self) -> None:
+        """Re-read server.json after a stale token (core restarted)."""
+        if self.demo_mode:
+            return
+        if self.discovery.source != "flag":
+            disc = load_discovery()
+            self.discovery = disc
+            self._token = disc.token
+            self._base = disc.url
+        else:
+            tok = _token_from_file()
+            if tok:
+                self._token = tok
+
+    def _client_error_from_http(self, e: urllib.error.HTTPError) -> ClientError:
+        err_body: dict[str, Any] = {}
+        try:
+            err_body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            pass
+        return ClientError(
+            message=str(err_body.get("error") or e.reason or "http error"),
+            code=err_body.get("code") if isinstance(err_body.get("code"), str) else None,
+            status=e.code,
+        )
+
     def _request_json(
         self, method: str, path: str, body: dict | None = None
     ) -> dict[str, Any]:
@@ -516,6 +552,11 @@ class KettleClient:
             raise ClientError(message=f"invalid JSON from {path}") from e
 
     def _post_ndjson(self, path: str, body: dict) -> Iterator[dict[str, Any]]:
+        yield from self._post_ndjson_once(path, body, auth_retry=True)
+
+    def _post_ndjson_once(
+        self, path: str, body: dict, *, auth_retry: bool
+    ) -> Iterator[dict[str, Any]]:
         url = self._base + path
         data = json.dumps(body).encode("utf-8")
         headers = {
@@ -537,16 +578,12 @@ class KettleClient:
                     except json.JSONDecodeError:
                         yield {"t": "text", "s": line + "\n"}
         except urllib.error.HTTPError as e:
-            err_body: dict[str, Any] = {}
-            try:
-                err_body = json.loads(e.read().decode("utf-8"))
-            except Exception:
-                pass
-            raise ClientError(
-                message=str(err_body.get("error") or e.reason or "http error"),
-                code=err_body.get("code") if isinstance(err_body.get("code"), str) else None,
-                status=e.code,
-            ) from e
+            err = self._client_error_from_http(e)
+            if err.code == "auth" and auth_retry:
+                self._reload_discovery()
+                yield from self._post_ndjson_once(path, body, auth_retry=False)
+                return
+            raise err from e
         except urllib.error.URLError as e:
             raise ClientError(message=f"cannot reach {self._base}: {e.reason}") from e
 
@@ -557,6 +594,7 @@ class KettleClient:
         body: dict | None = None,
         *,
         accept: str = "application/json",
+        auth_retry: bool = True,
     ) -> str:
         url = self._base + path
         data = None if body is None else json.dumps(body).encode("utf-8")
@@ -574,16 +612,13 @@ class KettleClient:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
-            err_body: dict[str, Any] = {}
-            try:
-                err_body = json.loads(e.read().decode("utf-8"))
-            except Exception:
-                pass
-            raise ClientError(
-                message=str(err_body.get("error") or e.reason or "http error"),
-                code=err_body.get("code") if isinstance(err_body.get("code"), str) else None,
-                status=e.code,
-            ) from e
+            err = self._client_error_from_http(e)
+            if err.code == "auth" and auth_retry:
+                self._reload_discovery()
+                return self._request_raw(
+                    method, path, body, accept=accept, auth_retry=False
+                )
+            raise err from e
         except urllib.error.URLError as e:
             raise ClientError(message=f"cannot reach {self._base}: {e.reason}") from e
 
@@ -681,16 +716,29 @@ def sort_queue(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def normalize_phase(status: dict[str, Any] | None) -> str:
-    """Map GET /api/interview payload → none|interviewing|proposing|founded."""
+    """Map GET /api/interview payload → none|interviewing|proposing|founded.
+
+    Core founded = charter (PROJECT.md) AND ≥1 content entry. Viewports must
+    use the ``founded`` boolean when present. ``has_entries`` alone is not
+    founded — a found run can file the queue and still fail to write the charter.
+    """
     if not status:
-        return "founded"
-    if status.get("has_entries"):
+        return "none"
+    if "founded" in status:
+        if status.get("founded") is True:
+            return "founded"
+    elif str(status.get("status") or "").lower() == "founded":
         return "founded"
     st = str(status.get("status") or "none").lower()
-    if st in ("founded", "interviewing", "proposing", "none"):
+    if st in ("interviewing", "proposing", "none"):
         if st == "none" and status.get("has_proposal"):
             return "proposing"
         return st
+    if st == "founded":
+        # Boolean was False (or absent and we already returned); stay unfounded.
+        if status.get("has_proposal"):
+            return "proposing"
+        return "none"
     if status.get("has_proposal"):
         return "proposing"
     return "none"

@@ -1104,14 +1104,22 @@ class KettleTui(App[None]):
             )
             entries: list[dict[str, Any]] = []
             iv: dict[str, Any] | None = None
+            err: str | None = None
             if pid:
-                q = self.client.queue(str(pid), mutate=False)
-                entries = sort_queue(list(q.get("entries") or []))
+                try:
+                    q = self.client.queue(str(pid), mutate=False)
+                    entries = sort_queue(list(q.get("entries") or []))
+                except ClientError as e:
+                    if e.code != "queue_corrupt":
+                        raise
+                    entries = []
+                    err = str(e)
                 try:
                     iv = self.client.interview_status(str(pid))
-                except ClientError:
-                    iv = {"status": "founded", "has_entries": bool(entries)}
-            err = None
+                except ClientError as e:
+                    iv = {"founded": False, "status": "none"}
+                    if err is None:
+                        err = str(e)
         except ClientError as e:
             ping, projects, pid, entries, iv, err = None, [], None, [], None, str(e)
 
@@ -1149,7 +1157,10 @@ class KettleTui(App[None]):
                 iv = self.state.interview_status
             err = None
         except ClientError as e:
-            entries, iv, err = self.state.entries, self.state.interview_status, str(e)
+            if e.code == "queue_corrupt":
+                entries, iv, err = self.state.entries, self.state.interview_status, str(e)
+            else:
+                entries, iv, err = self.state.entries, self.state.interview_status, str(e)
 
         def apply() -> None:
             sel = self.state.selected_id
@@ -2052,13 +2063,23 @@ class KettleTui(App[None]):
                 self.query_one(DeskPane).stream_write(
                     f"found error: {err}", style="#e06c75"
                 )
-            else:
+                self._refresh_phase()
+                self._paint_status()
+                self.notify("found failed", timeout=2)
+                return
+            self._refresh_phase()
+            if self.state.phase == "founded":
                 self.query_one(DeskPane).stream_write(
                     "— desk founded — sitting open —", style="#a6e3a1"
                 )
-            self._refresh_phase()
+                self.notify("desk founded", timeout=2)
+            else:
+                self.query_one(DeskPane).stream_write(
+                    "— found did not write the charter — proposal still open —",
+                    style="#e5c07b",
+                )
+                self.notify("desk not founded — keep the proposal open", timeout=3)
             self._paint_status()
-            self.notify("desk founded" if not err else "found failed", timeout=2)
 
         self.call_from_thread(done)
 
@@ -2080,6 +2101,13 @@ class KettleTui(App[None]):
                 self.query_one(DeskPane).stream_write(m, style="#e06c75")
 
             self.call_from_thread(write_err)
+        elif t == "done" and ev.get("error"):
+            msg = str(ev.get("error"))
+
+            def write_done_err(m: str = msg) -> None:
+                self.query_one(DeskPane).stream_write(m, style="#e06c75")
+
+            self.call_from_thread(write_done_err)
 
     @work(thread=True)
     def _approve_worker(self, pid: str, eid: str) -> None:

@@ -93,5 +93,21 @@ def test_founding_progression_none_to_founded():
 
     list(c.found_events("new-desk"))
     status = c.interview_status("new-desk")
+    assert status.get("founded") is True
+    assert status.get("has_charter") is True
     assert normalize_phase(status) == "founded"
     assert c.queue("new-desk")["entries"], "founding stocks a content queue"
+
+
+def test_demo_interview_entries_without_charter_are_not_founded():
+    c = _client()
+    list(c.interview_events("new-desk", ""))
+    list(c.propose_events("new-desk"))
+    # Content in the queue without a founded phase (failed Found Desk).
+    c._demo_queues["new-desk"] = list(c.queue("new-desk")["entries"]) + [
+        {"id": "readme", "path": "README.md", "status": "pending"}
+    ]
+    status = c.interview_status("new-desk")
+    assert status["has_entries"] is True
+    assert status["founded"] is False
+    assert normalize_phase(status) == "proposing"

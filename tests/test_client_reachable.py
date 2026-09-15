@@ -117,3 +117,67 @@ def test_spawns_core_and_reattaches(tmp_path, monkeypatch, live_core):
     # Re-attached to the spawned core's discovered URL.
     assert client.ping().get("app") == "kettle"
     assert client._base == live_url
+
+
+class _AuthThenOkHandler(BaseHTTPRequestHandler):
+    """First /api/ping with the stale token → 403 auth; after reload, 200."""
+
+    stale = "stale-token"
+    fresh = "fresh-token"
+    hits: list[str] = []
+
+    def do_GET(self):  # noqa: N802
+        token = self.headers.get("X-Kettle-Token") or ""
+        type(self).hits.append(token)
+        if token != self.fresh:
+            body = json.dumps({"error": "bad token", "code": "auth"}).encode()
+            self.send_response(403)
+        else:
+            body = json.dumps({"app": "kettle", "version": "test"}).encode()
+            self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):  # noqa: A002
+        return
+
+
+def test_auth_403_rereads_discovery_and_retries_once(tmp_path, monkeypatch):
+    _AuthThenOkHandler.hits = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AuthThenOkHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    url = f"http://127.0.0.1:{port}"
+    disc = tmp_path / "server.json"
+    disc.write_text(
+        json.dumps({"url": url, "port": port, "token": _AuthThenOkHandler.stale}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(client_mod, "DISCOVERY_PATH", disc)
+
+    client = KettleClient()
+    assert client._token == _AuthThenOkHandler.stale
+    orig = client._reload_discovery
+
+    def _reload() -> None:
+        disc.write_text(
+            json.dumps({"url": url, "port": port, "token": _AuthThenOkHandler.fresh}),
+            encoding="utf-8",
+        )
+        orig()
+
+    client._reload_discovery = _reload  # type: ignore[method-assign]
+    try:
+        ping = client.ping()
+        assert ping.get("app") == "kettle"
+        assert _AuthThenOkHandler.hits == [
+            _AuthThenOkHandler.stale,
+            _AuthThenOkHandler.fresh,
+        ]
+        assert client._token == _AuthThenOkHandler.fresh
+    finally:
+        server.shutdown()
+        server.server_close()

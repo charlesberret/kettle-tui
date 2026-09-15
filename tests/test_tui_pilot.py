@@ -149,3 +149,60 @@ def test_post_found_selects_a_content_entry():
             assert str(app.state.selected_id) in ids
 
     asyncio.run(run())
+
+
+def test_found_without_charter_keeps_proposing():
+    """Core can file content and still fail PROJECT.md — viewport must not announce founded."""
+
+    async def run():
+        app = KettleTui(KettleClient(demo_mode=True), project_id="new-desk")
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: app.state.phase == "none")
+            await pilot.press("i")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "interviewing" and not app.state.streaming,
+            )
+            await pilot.press("d")
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "proposing" and not app.state.streaming,
+            )
+
+            def fake_found(pid, **kw):
+                app.client._demo_queues[pid] = [
+                    {
+                        "id": "readme",
+                        "title": "README",
+                        "path": "README.md",
+                        "status": "pending",
+                        "urgency": "low",
+                    }
+                ]
+                # Phase stays proposing: charter was not written.
+                yield {"t": "text", "s": "queued files; charter missing\n"}
+                yield {"t": "done"}
+
+            app.client.found_events = fake_found  # type: ignore[assignment]
+            orig_iv = app.client.interview_status
+
+            def iv_no_charter(pid: str):
+                data = orig_iv(pid)
+                data["founded"] = False
+                data["has_charter"] = False
+                data["status"] = "proposing"
+                data["has_entries"] = True
+                data["has_proposal"] = True
+                return data
+
+            app.client.interview_status = iv_no_charter  # type: ignore[assignment]
+
+            app.action_found_desk()
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(pilot, lambda: not app.state.streaming)
+            assert app.state.phase == "proposing"
+
+    asyncio.run(run())
