@@ -51,6 +51,7 @@ from .client import (
     ClientError,
     KettleClient,
     default_project_id,
+    default_project_name,
     founding_steps,
     is_missing_project_folder,
     normalize_phase,
@@ -587,6 +588,7 @@ class ProjectPicker(ModalScreen[str | None]):
             kit = p.get("kit") or ""
             label = f"{name}  [dim]{pid}" + (f" · {kit}" if kit else "") + f"{mark}[/]"
             ol.add_option(Option(label, id=pid))
+        ol.add_option(Option("[dim]+ register a folder…[/]", id="__register__"))
         ol.focus()
 
     @on(OptionList.OptionSelected, "#project-list")
@@ -595,6 +597,86 @@ class ProjectPicker(ModalScreen[str | None]):
         self.dismiss(str(opt.id) if opt and opt.id else None)
 
     def action_dismiss_picker(self) -> None:
+        self.dismiss(None)
+
+
+@dataclass
+class RegisterDraft:
+    root: str
+    note: str
+    name: str
+
+
+class RegisterDeskModal(ModalScreen[RegisterDraft | None]):
+    """§3.1 — folder + founding sentence. Name defaults from the folder."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, *, default_root: str = "") -> None:
+        super().__init__()
+        self._default_root = default_root
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-register"):
+            yield Static("register a folder", classes="pane-title")
+            yield Static(
+                "In a sentence or two: what is this, and what do you want "
+                "from a second reader here?",
+                classes="hint",
+            )
+            yield Input(
+                value=self._default_root,
+                placeholder="folder path (~/… or absolute)",
+                id="reg-root",
+            )
+            yield Input(placeholder="name (optional — from folder)", id="reg-name")
+            yield TextArea(id="reg-note", soft_wrap=True)
+            yield Static("", id="reg-err")
+            with Horizontal(classes="modal-actions"):
+                yield Button("register", id="reg-go", variant="primary")
+                yield Button("cancel", id="reg-cancel")
+
+    def on_mount(self) -> None:
+        root = self.query_one("#reg-root", Input)
+        if self._default_root:
+            name = self.query_one("#reg-name", Input)
+            if not name.value.strip():
+                name.value = default_project_name(self._default_root)
+            self.query_one("#reg-note", TextArea).focus()
+        else:
+            root.focus()
+
+    def _draft_or_error(self) -> RegisterDraft | None:
+        root = self.query_one("#reg-root", Input).value.strip()
+        note = self.query_one("#reg-note", TextArea).text.strip()
+        err = self.query_one("#reg-err", Static)
+        if not root:
+            err.update("folder path required")
+            self.query_one("#reg-root", Input).focus()
+            return None
+        if not note:
+            err.update("founding sentence required")
+            self.query_one("#reg-note", TextArea).focus()
+            return None
+        typed = self.query_one("#reg-name", Input).value.strip()
+        seeded = default_project_name(self._default_root) if self._default_root else ""
+        if not typed or typed == seeded:
+            name = default_project_name(root)
+        else:
+            name = typed
+        return RegisterDraft(root=root, note=note, name=name)
+
+    @on(Button.Pressed, "#reg-go")
+    def go(self) -> None:
+        draft = self._draft_or_error()
+        if draft:
+            self.dismiss(draft)
+
+    @on(Button.Pressed, "#reg-cancel")
+    def cancel_btn(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
         self.dismiss(None)
 
 
@@ -622,6 +704,7 @@ class CommandPalette(ModalScreen[str | None]):
             ("draft-proposal", "Draft desk proposal", "d"),
             ("found-desk", "Found desk", ""),
             ("pick-project", "Switch project", "p"),
+            ("register-desk", "Register a folder", "n"),
             ("focus-queue", "Focus queue", ""),
             ("focus-editor", "Focus editor", ""),
             ("focus-composer", "Focus composer", ""),
@@ -688,6 +771,7 @@ class HelpScreen(ModalScreen[None]):
 | `d` | Draft proposal |
 | `Ctrl+S` | Save |
 | `p` | Project |
+| `n` | Register a folder |
 | `r` | Refresh |
 | `Ctrl+K` | Palette |
 | `Tab` | Cycle focus |
@@ -941,7 +1025,7 @@ class KettleTui(App[None]):
         text-overflow: ellipsis;
     }
 
-    #modal, #modal-help {
+    #modal, #modal-help, #modal-register {
         width: 64;
         max-width: 90%;
         height: auto;
@@ -952,6 +1036,7 @@ class KettleTui(App[None]):
         overflow-x: hidden;
     }
     #modal { height: 18; }
+    #modal-register { height: 22; }
     #modal-sm {
         width: 56;
         max-width: 90%;
@@ -967,12 +1052,14 @@ class KettleTui(App[None]):
         background: #313244;
         border: none;
     }
-    #palette-filter, #comment-body {
+    #palette-filter, #comment-body, #reg-root, #reg-name, #reg-note {
         margin: 1 0;
         background: #313244;
         border: none;
     }
     #comment-body { height: 8; }
+    #reg-note { height: 6; }
+    #reg-err { color: #e06c75; height: 1; }
     .modal-actions { height: 3; align: left middle; }
     .modal-actions Button { margin-right: 1; }
     #palette-list, #project-list {
@@ -994,6 +1081,7 @@ class KettleTui(App[None]):
         Binding("question_mark", "help", "Help"),
         Binding("r", "refresh", "Refresh"),
         Binding("p", "pick_project", "Project"),
+        Binding("n", "register_desk", "Register", show=False),
         Binding("a", "approve", "Approve"),
         Binding("c", "comment", "Comment"),
         Binding("s", "sweep", "Sweep"),
@@ -1026,6 +1114,7 @@ class KettleTui(App[None]):
         self.state = DeskState()
         self.queue_width = QUEUE_W_DEFAULT
         self.desk_width = DESK_W_DEFAULT
+        self._offered_register = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1160,6 +1249,13 @@ class KettleTui(App[None]):
                 self.load_entry(str(self.state.selected_id))
             else:
                 self._paint_empty_entry()
+            if (
+                self._require_here
+                and not self.state.project_id
+                and not self._offered_register
+            ):
+                self._offered_register = True
+                self.set_timer(0.1, self.action_register_desk)
 
         self.call_from_thread(apply)
 
@@ -1541,7 +1637,12 @@ class KettleTui(App[None]):
 
     def action_pick_project(self) -> None:
         def done(pid: str | None) -> None:
-            if not pid or pid == self.state.project_id:
+            if not pid:
+                return
+            if pid == "__register__":
+                self.action_register_desk()
+                return
+            if pid == self.state.project_id:
                 return
             self._preferred_project = pid
             self.state.project_id = pid
@@ -1549,6 +1650,55 @@ class KettleTui(App[None]):
             self.load_queue_only()
 
         self.push_screen(ProjectPicker(self.state.projects, self.state.project_id), done)
+
+    def action_register_desk(self) -> None:
+        if self.state.streaming:
+            self.notify("already streaming", severity="warning")
+            return
+        default_root = self._here or os.getcwd()
+
+        def done(draft: RegisterDraft | None) -> None:
+            if not draft:
+                return
+            self._register_worker(draft)
+
+        self.push_screen(RegisterDeskModal(default_root=default_root), done)
+
+    @work(thread=True)
+    def _register_worker(self, draft: RegisterDraft) -> None:
+        try:
+            res = self.client.add_project(draft.name, draft.root, draft.note)
+            err = None
+        except ClientError as e:
+            res, err = {}, str(e)
+
+        def apply() -> None:
+            if err:
+                self.notify(f"register failed: {err}", severity="error")
+                try:
+                    self.query_one(DeskPane).stream_write(
+                        f"register error: {err}", style="#e06c75"
+                    )
+                except Exception:
+                    pass
+                return
+            proj = res.get("project") if isinstance(res.get("project"), dict) else res
+            pid = str((proj or {}).get("id") or res.get("id") or "")
+            if not pid:
+                self.notify("register returned no project id", severity="error")
+                return
+            try:
+                self.state.projects = self.client.projects()
+            except ClientError:
+                pass
+            self._preferred_project = pid
+            self.state.project_id = pid
+            self.notify(f"registered {pid}", timeout=2)
+            desk = self.query_one(DeskPane)
+            desk.stream_write(f"registered [{pid}] {draft.name}", style="#a6e3a1")
+            self.send_interview("")
+
+        self.call_from_thread(apply)
 
     def action_palette(self) -> None:
         def done(cmd: str | None) -> None:
@@ -2347,6 +2497,7 @@ class KettleTui(App[None]):
             "draft-proposal": self.action_draft_proposal,
             "found-desk": self.action_found_desk,
             "pick-project": self.action_pick_project,
+            "register-desk": self.action_register_desk,
             "focus-queue": lambda: self.query_one("#queue-list", ListView).focus(),
             "focus-editor": lambda: self.query_one("#editor", TextArea).focus(),
             "focus-composer": lambda: self.query_one("#composer", Input).focus(),

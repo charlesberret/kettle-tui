@@ -13,6 +13,7 @@ import pytest
 from kettle_tui.client import (
     ClientError,
     default_project_id,
+    default_project_name,
     founding_steps,
     is_missing_project_folder,
     normalize_phase,
@@ -46,6 +47,11 @@ def test_default_project_uses_env(monkeypatch):
 def test_default_project_env_must_exist(monkeypatch):
     monkeypatch.setenv("KETTLE_PROJECT", "missing")
     assert default_project_id(PROJECTS) == "alpha"
+
+
+def test_default_project_name_from_folder():
+    assert default_project_name("/tmp/my-notes") == "My Notes"
+    assert default_project_name("~/cloud/git-projects/kettle-tui") == "Kettle Tui"
 
 
 def test_default_project_none_when_empty(monkeypatch):

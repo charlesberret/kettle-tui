@@ -7,7 +7,9 @@ entirely in-memory, never touching the network.
 
 from __future__ import annotations
 
-from kettle_tui.client import KettleClient, normalize_phase
+import pytest
+
+from kettle_tui.client import ClientError, KettleClient, normalize_phase
 
 
 def _client() -> KettleClient:
@@ -29,6 +31,25 @@ def test_demo_sweep_health_defaults_empty_and_is_writable():
         "updated": "2026-09-19T14:02:00",
     }
     assert c.sweep_health("demo-desk")["state"] == "failed"
+
+
+def test_add_project_requires_founding_sentence():
+    c = _client()
+    with pytest.raises(ClientError) as ei:
+        c.add_project("X", "/tmp/x", "")
+    assert ei.value.status == 400
+    assert "founding sentence" in ei.value.message
+
+
+def test_add_project_registers_and_starts_unfounded():
+    c = _client()
+    res = c.add_project("", "/tmp/kettle-tui-reg", "A desk for the TUI register test.")
+    assert res.get("ok") is True
+    pid = res["id"]
+    assert pid
+    ids = {p["id"] for p in c.projects()}
+    assert pid in ids
+    assert normalize_phase(c.interview_status(pid)) == "none"
 
 
 def test_projects_are_the_demo_set():

@@ -51,6 +51,7 @@ herdr server reload-config
 | `d` | Draft proposal |
 | `Ctrl+S` | Save |
 | `p` | Project |
+| `n` | Register a folder |
 | `r` | Refresh |
 | `Ctrl+K` | Palette (compact / clear session / …) |
 | `Tab` | Cycle focus |

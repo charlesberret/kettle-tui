@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 
-from kettle_tui.app import ConfirmActionModal, KettleTui
+from textual.widgets import Input, TextArea
+
+from kettle_tui.app import ConfirmActionModal, KettleTui, RegisterDeskModal
 from kettle_tui.client import KettleClient, sweep_health_status
 
 
@@ -42,6 +44,33 @@ def test_failed_sweep_health_shows_on_status():
             assert await _settle(pilot, lambda: bool(app.state.entries))
             assert app.state.sweep_health.get("state") == "failed"
             assert sweep_health_status(app.state.sweep_health) == "last sweep failed"
+
+    asyncio.run(run())
+
+
+def test_register_desk_lands_in_interview():
+    async def run():
+        app = _app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            app.action_register_desk()
+            assert await _settle(
+                pilot, lambda: isinstance(app.screen, RegisterDeskModal)
+            )
+            modal = app.screen
+            assert isinstance(modal, RegisterDeskModal)
+            modal.query_one("#reg-root", Input).value = "/tmp/kettle-tui-reg-pilot"
+            modal.query_one("#reg-note", TextArea).load_text(
+                "A desk so the TUI can found a folder without leaving."
+            )
+            modal.go()
+            assert await _settle(
+                pilot,
+                lambda: app.state.project_id not in (None, "demo-desk")
+                and app.state.phase == "interviewing"
+                and not app.state.streaming,
+                tries=80,
+            )
 
     asyncio.run(run())
 

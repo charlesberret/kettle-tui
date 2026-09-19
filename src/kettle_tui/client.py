@@ -190,6 +190,9 @@ class KettleClient:
         self._demo_files: dict[str, str] = {}
         self._demo_phases: dict[str, str] = dict(demo.DEMO_PHASES) if demo_mode else {}
         self._demo_sweep_health: dict[str, dict[str, Any]] = {}
+        self._demo_projects: list[dict[str, Any]] = (
+            [dict(p) for p in demo.DEMO_PROJECTS] if demo_mode else []
+        )
         if demo_mode:
             self.discovery = Discovery(
                 url="demo://local",
@@ -232,9 +235,50 @@ class KettleClient:
 
     def projects(self) -> list[dict[str, Any]]:
         if self.demo_mode:
-            return list(demo.DEMO_PROJECTS)
+            return list(self._demo_projects)
         data = self._get("/api/projects")
         return list(data.get("projects") or [])
+
+    def add_project(
+        self,
+        name: str,
+        root: str,
+        note: str,
+        *,
+        kit: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /api/projects/add — founding sentence (`note`) is required."""
+        note = (note or "").strip()
+        name = (name or "").strip() or default_project_name(root)
+        root = (root or "").strip()
+        if not note:
+            raise ClientError(
+                message=(
+                    "founding sentence required: in a sentence or two, what is this "
+                    "and what do you want from a second reader here?"
+                ),
+                code="bad_request",
+                status=400,
+            )
+        if not root:
+            raise ClientError(
+                message="folder path required",
+                code="bad_request",
+                status=400,
+            )
+        if self.demo_mode:
+            pid = _demo_project_id(name, {p.get("id") for p in self._demo_projects})
+            proj = {"id": pid, "name": name, "root": root}
+            if kit:
+                proj["kit"] = kit
+            self._demo_projects.append(proj)
+            self._demo_phases[pid] = "none"
+            self._demo_queues[pid] = []
+            return {"ok": True, "id": pid, "project": proj, **proj}
+        body: dict[str, Any] = {"name": name, "root": root, "note": note}
+        if kit:
+            body["kit"] = kit
+        return self._post("/api/projects/add", body)
 
     def queue(self, project_id: str, *, mutate: bool = False) -> dict[str, Any]:
         if self.demo_mode:
@@ -725,6 +769,25 @@ class KettleClient:
         if parsed.port:
             return f"{host}:{parsed.port}"
         return host
+
+
+def default_project_name(root: str) -> str:
+    """Display name from a folder path (CLI / web parity)."""
+    base = Path(root or "").expanduser().name
+    return base.replace("-", " ").replace("_", " ").title() or "Project"
+
+
+def _demo_project_id(name: str, taken: set) -> str:
+    slug = "".join(c.lower() if c.isalnum() else "_" for c in name).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    slug = (slug or "project")[:40]
+    pid = slug
+    n = 2
+    while pid in taken:
+        pid = f"{slug}_{n}"
+        n += 1
+    return pid
 
 
 def resolve_project_root(root: Any) -> Path | None:
