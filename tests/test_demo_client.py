@@ -20,6 +20,17 @@ def test_ping_reports_demo():
     assert ping["version"] == "demo"
 
 
+def test_demo_sweep_health_defaults_empty_and_is_writable():
+    c = _client()
+    assert c.sweep_health("demo-desk") == {}
+    c._demo_sweep_health["demo-desk"] = {
+        "state": "failed",
+        "error": "boom",
+        "updated": "2026-09-19T14:02:00",
+    }
+    assert c.sweep_health("demo-desk")["state"] == "failed"
+
+
 def test_projects_are_the_demo_set():
     ids = {p["id"] for p in _client().projects()}
     assert {"demo-desk", "notes", "new-desk"} <= ids

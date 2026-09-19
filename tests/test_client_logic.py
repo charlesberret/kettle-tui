@@ -6,6 +6,8 @@ and the web app must agree on.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from kettle_tui.client import (
@@ -14,8 +16,11 @@ from kettle_tui.client import (
     founding_steps,
     is_missing_project_folder,
     normalize_phase,
+    normalize_sweep_state,
     ritual_controls,
     sort_queue,
+    sweep_health_detail,
+    sweep_health_status,
 )
 
 
@@ -121,6 +126,39 @@ def test_client_error_queue_corrupt_is_desk_local():
 def test_client_error_busy_asks_to_wait():
     err = ClientError(message="curator turn in flight", code="busy", status=409)
     assert "wait" in str(err).lower()
+
+
+def test_sweep_health_quiet_when_done_or_idle():
+    assert sweep_health_status({"state": "done"}) is None
+    assert sweep_health_status({"state": "idle"}) is None
+    assert sweep_health_status({}) is None
+    assert sweep_health_detail({"state": "done"}) is None
+
+
+def test_sweep_health_failed_is_visible():
+    h = {
+        "state": "failed",
+        "error": "client disconnected; curator stopped",
+        "updated": "2026-09-19T14:02:00-04:00",
+    }
+    assert sweep_health_status(h) == "last sweep failed"
+    note = sweep_health_detail(h)
+    assert note is not None
+    assert "did not finish" in note
+    assert "14:02" in note
+
+
+def test_sweep_health_running_is_visible():
+    h = {"state": "running", "pid": os.getpid(), "updated": "2026-09-19T14:02:00"}
+    assert normalize_sweep_state(h) == "running"
+    assert sweep_health_status(h) == "sweep running"
+
+
+def test_stale_running_pid_reads_as_failed(monkeypatch):
+    monkeypatch.setattr("kettle_tui.client._process_alive", lambda pid: False)
+    h = {"state": "running", "pid": 1, "error": "killed", "updated": "t"}
+    assert normalize_sweep_state(h) == "failed"
+    assert sweep_health_status(h) == "last sweep failed"
 
 
 def test_missing_project_folder_detects_core_copy():

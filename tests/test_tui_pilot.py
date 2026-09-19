@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from kettle_tui.app import ConfirmActionModal, KettleTui
-from kettle_tui.client import KettleClient
+from kettle_tui.client import KettleClient, sweep_health_status
 
 
 def _app() -> KettleTui:
@@ -27,6 +27,23 @@ async def _settle(pilot, cond, tries: int = 60) -> bool:
             return True
         await asyncio.sleep(0.05)
     return False
+
+
+def test_failed_sweep_health_shows_on_status():
+    async def run():
+        client = KettleClient(demo_mode=True)
+        client._demo_sweep_health["demo-desk"] = {
+            "state": "failed",
+            "error": "boom",
+            "updated": "2026-09-19T14:02:00",
+        }
+        app = KettleTui(client, project_id="demo-desk")
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            assert app.state.sweep_health.get("state") == "failed"
+            assert sweep_health_status(app.state.sweep_health) == "last sweep failed"
+
+    asyncio.run(run())
 
 
 def test_boots_and_loads_queue():

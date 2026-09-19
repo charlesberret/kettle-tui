@@ -56,6 +56,8 @@ from .client import (
     normalize_phase,
     ritual_controls,
     sort_queue,
+    sweep_health_detail,
+    sweep_health_status,
 )
 
 # ── helpers ─────────────────────────────────────────────────────────────
@@ -717,6 +719,7 @@ class DeskState:
     interview_status: dict[str, Any] | None = None
     view_mode: str = "file"  # file | diff
     file_abs: str | None = None  # absolute path when known (for $EDITOR)
+    sweep_health: dict[str, Any] = field(default_factory=dict)
 
 
 class KettleTui(App[None]):
@@ -1109,6 +1112,7 @@ class KettleTui(App[None]):
             entries: list[dict[str, Any]] = []
             iv: dict[str, Any] | None = None
             err: str | None = None
+            health: dict[str, Any] = {}
             if pid:
                 try:
                     q = self.client.queue(str(pid), mutate=False)
@@ -1132,8 +1136,10 @@ class KettleTui(App[None]):
                     iv = {"founded": False, "status": "none"}
                     if err is None:
                         err = str(e)
+                health = self._read_sweep_health(str(pid))
         except ClientError as e:
             ping, projects, pid, entries, iv, err = None, [], None, [], None, str(e)
+            health = {}
 
         def apply() -> None:
             self.state.projects = projects
@@ -1144,10 +1150,12 @@ class KettleTui(App[None]):
             self.state.error = err
             self.state.interview_status = iv
             self.state.phase = normalize_phase(iv)
+            self.state.sweep_health = health
             self.state.view_mode = "file"
             self._preferred_project = self.state.project_id
             self._paint_shell()
             self._announce_phase()
+            self._announce_sweep_health()
             if self.state.selected_id:
                 self.load_entry(str(self.state.selected_id))
             else:
@@ -1182,9 +1190,11 @@ class KettleTui(App[None]):
                 entries, iv, err = [], self.state.interview_status, str(e)
             else:
                 entries, iv, err = self.state.entries, self.state.interview_status, str(e)
+        health = self._read_sweep_health(str(pid)) if not folder_gone else {}
 
         def apply() -> None:
             self.state.projects = projects
+            self.state.sweep_health = health
             if folder_gone:
                 ids = {p.get("id") for p in projects}
                 self.state.error = err
@@ -1257,6 +1267,21 @@ class KettleTui(App[None]):
     def _announce_phase(self) -> None:
         # Phase is shown on the desk step strip only — no how-to spam in the stream.
         return
+
+    def _read_sweep_health(self, pid: str) -> dict[str, Any]:
+        try:
+            return self.client.sweep_health(pid)
+        except ClientError:
+            return {}
+
+    def _announce_sweep_health(self) -> None:
+        note = sweep_health_detail(self.state.sweep_health)
+        if not note:
+            return
+        try:
+            self.query_one(DeskPane).stream_write(note, style="#e5c07b")
+        except Exception:
+            pass
 
     @work(exclusive=True, thread=True)
     def load_entry(self, entry_id: str) -> None:
@@ -1434,6 +1459,9 @@ class KettleTui(App[None]):
             bits.append("[#e5c07b]dirty[/]")
         if self.state.streaming:
             bits.append("streaming…")
+        token = sweep_health_status(self.state.sweep_health)
+        if token and not self.state.streaming:
+            bits.append(f"[#e5c07b]{token}[/]")
         status.update("  ·  ".join(bits))
 
     # ── events ──────────────────────────────────────────────────────────
@@ -1671,6 +1699,7 @@ class KettleTui(App[None]):
             q_err = None
         except ClientError as e:
             q_err = str(e)
+        health = self._read_sweep_health(pid)
 
         def done() -> None:
             self.state.streaming = False
@@ -1709,12 +1738,14 @@ class KettleTui(App[None]):
                         "queue empty — review program may be exhausted",
                         style="dim",
                     )
+            self.state.sweep_health = health
             self._paint_shell()
             if self.state.selected_id:
                 self.load_entry(str(self.state.selected_id))
             else:
                 self._paint_empty_entry()
             self._paint_status()
+            self._announce_sweep_health()
             self.notify("sweep finished" if not err else "sweep failed", timeout=2)
 
         self.call_from_thread(done)

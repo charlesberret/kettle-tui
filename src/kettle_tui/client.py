@@ -25,6 +25,11 @@ from . import demo
 DISCOVERY_PATH = Path.home() / ".cache" / "kettle" / "server.json"
 DEFAULT_URL = "http://127.0.0.1:4242"
 TOKEN_HEADER = "X-Kettle-Token"
+# Dual-read: new desks use .kettle/; a leftover .setsweep/ desk is still live.
+SWEEP_HEALTH_PATHS = (
+    ".kettle/runtime/sweep-health.json",
+    ".setsweep/runtime/sweep-health.json",
+)
 
 
 @dataclass
@@ -57,6 +62,55 @@ class ClientError(Exception):
         if self.status:
             bits.append(f"[{self.status}]")
         return " ".join(bits)
+
+
+def _process_alive(pid: Any) -> bool | None:
+    """True/False if we could tell whether *pid* exists; None if unknown."""
+    try:
+        n = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    try:
+        os.kill(n, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+
+
+def normalize_sweep_state(health: dict[str, Any] | None) -> str:
+    """``running|done|failed|idle`` (or empty). A stale ``running`` pid is ``failed``."""
+    if not health:
+        return ""
+    state = str(health.get("state") or "").lower()
+    if state == "running" and _process_alive(health.get("pid")) is False:
+        return "failed"
+    return state
+
+
+def sweep_health_status(health: dict[str, Any] | None) -> str | None:
+    """Short status-bar token when the last curator sweep did not finish."""
+    state = normalize_sweep_state(health)
+    if state == "running":
+        return "sweep running"
+    if state == "failed":
+        return "last sweep failed"
+    return None
+
+
+def sweep_health_detail(health: dict[str, Any] | None) -> str | None:
+    """Stream notice: last sweep died, with error and time if present."""
+    state = normalize_sweep_state(health)
+    if state not in ("running", "failed"):
+        return None
+    when = health.get("updated") or health.get("started") or "?"
+    err = str(health.get("error") or state).strip()
+    return f"last sweep did not finish: {err} at {when}"
 
 
 def is_missing_project_folder(err: ClientError) -> bool:
@@ -135,6 +189,7 @@ class KettleClient:
         self._demo_queues = demo.fresh_queues() if demo_mode else {}
         self._demo_files: dict[str, str] = {}
         self._demo_phases: dict[str, str] = dict(demo.DEMO_PHASES) if demo_mode else {}
+        self._demo_sweep_health: dict[str, dict[str, Any]] = {}
         if demo_mode:
             self.discovery = Discovery(
                 url="demo://local",
@@ -237,6 +292,27 @@ class KettleClient:
             {"project": project_id, "mutate": "1" if mutate else "0"}
         )
         return self._get(f"/api/interview?{qs}")
+
+    def sweep_health(self, project_id: str) -> dict[str, Any]:
+        """Read ``<desk>/runtime/sweep-health.json`` (SITTING-FLOWS §4.6).
+
+        Missing file or unreadable JSON is an empty beacon, not an error.
+        """
+        if self.demo_mode:
+            return dict(self._demo_sweep_health.get(project_id) or {})
+        for path in SWEEP_HEALTH_PATHS:
+            try:
+                raw = self.file_text(project_id, path)
+            except ClientError as e:
+                if e.code == "not_found" or e.status == 404:
+                    continue
+                raise
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+        return {}
 
     def file_text(self, project_id: str, path: str) -> str:
         """File body for the editor. Raises ClientError on hard failure."""
