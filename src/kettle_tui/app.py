@@ -700,6 +700,7 @@ class CommandPalette(ModalScreen[str | None]):
             ("external-editor", "External editor", "Ctrl+E"),
             ("compact", "Compact session", ""),
             ("clear-session", "Clear session", ""),
+            ("refound-desk", "Refound this desk", ""),
             ("begin-interview", "Begin founding interview", "i"),
             ("draft-proposal", "Draft desk proposal", "d"),
             ("found-desk", "Found desk", ""),
@@ -1664,6 +1665,75 @@ class KettleTui(App[None]):
 
         self.push_screen(RegisterDeskModal(default_root=default_root), done)
 
+    def action_refound_desk(self) -> None:
+        pid = self.state.project_id
+        if not pid:
+            self.notify("no project", severity="warning")
+            return
+        if self.state.streaming:
+            self.notify("already streaming", severity="warning")
+            return
+
+        def on_confirm(choice: str | None) -> None:
+            if choice != "ok":
+                return
+            self._refound_worker(pid)
+
+        self.push_screen(
+            ConfirmActionModal(
+                "Refound this desk?",
+                "Charter and live queue reset. History (lineage, archive, comments) stays. "
+                "The founding sentence is kept.",
+                ok_label="refound",
+            ),
+            on_confirm,
+        )
+
+    @work(thread=True)
+    def _refound_worker(self, pid: str) -> None:
+        try:
+            res = self.client.refound_project(pid)
+            err = None
+        except ClientError as e:
+            res, err = {}, str(e)
+
+        def apply() -> None:
+            if err:
+                self.notify(f"refound failed: {err}", severity="error")
+                self.query_one(DeskPane).stream_write(
+                    f"refound error: {err}", style="#e06c75"
+                )
+                return
+            kept = res.get("kept") or []
+            note = "founding sentence kept" if res.get("note_preserved") else "no founding sentence on file"
+            desk = self.query_one(DeskPane)
+            desk.stream_write("— desk refounded —", style="#cba6f7")
+            desk.stream_write(note, style="dim")
+            if kept:
+                desk.stream_write("kept: " + ", ".join(str(k) for k in kept[:8]), style="dim")
+            self.state.entries = []
+            self.state.selected_id = None
+            self.state.phase = "none"
+            self.state.interview_status = {"founded": False, "status": "none"}
+            self._paint_empty_entry()
+            self._paint_shell()
+            self.notify("desk refounded", timeout=2)
+
+            def offer(choice: str | None) -> None:
+                if choice == "ok":
+                    self.send_interview("")
+
+            self.push_screen(
+                ConfirmActionModal(
+                    "Begin founding interview?",
+                    "The desk is unfounded again. Start the interview now, or press i later.",
+                    ok_label="interview",
+                ),
+                offer,
+            )
+
+        self.call_from_thread(apply)
+
     @work(thread=True)
     def _register_worker(self, draft: RegisterDraft) -> None:
         try:
@@ -2498,6 +2568,7 @@ class KettleTui(App[None]):
             "found-desk": self.action_found_desk,
             "pick-project": self.action_pick_project,
             "register-desk": self.action_register_desk,
+            "refound-desk": self.action_refound_desk,
             "focus-queue": lambda: self.query_one("#queue-list", ListView).focus(),
             "focus-editor": lambda: self.query_one("#editor", TextArea).focus(),
             "focus-composer": lambda: self.query_one("#composer", Input).focus(),

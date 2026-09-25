@@ -41,6 +41,15 @@ def test_add_project_requires_founding_sentence():
     assert "founding sentence" in ei.value.message
 
 
+def test_refound_resets_demo_desk_to_unfounded():
+    c = _client()
+    assert normalize_phase(c.interview_status("demo-desk")) == "founded"
+    res = c.refound_project("demo-desk")
+    assert res.get("ok") is True
+    assert normalize_phase(c.interview_status("demo-desk")) == "none"
+    assert c.queue("demo-desk")["entries"] == []
+
+
 def test_add_project_registers_and_starts_unfounded():
     c = _client()
     res = c.add_project("", "/tmp/kettle-tui-reg", "A desk for the TUI register test.")

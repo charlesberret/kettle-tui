@@ -48,6 +48,28 @@ def test_failed_sweep_health_shows_on_status():
     asyncio.run(run())
 
 
+def test_refound_desk_resets_and_offers_interview():
+    async def run():
+        app = _app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: app.state.phase == "founded")
+            app.action_refound_desk()
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("y")
+            assert await _settle(
+                pilot,
+                lambda: app.state.phase == "none" and not app.state.streaming,
+            )
+            assert app.state.entries == []
+            assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmActionModal))
+            await pilot.press("n")
+            await pilot.pause()
+            assert app.state.phase == "none"
+            assert not isinstance(app.screen, ConfirmActionModal)
+
+    asyncio.run(run())
+
+
 def test_register_desk_lands_in_interview():
     async def run():
         app = _app()

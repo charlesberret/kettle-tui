@@ -280,6 +280,30 @@ class KettleClient:
             body["kit"] = kit
         return self._post("/api/projects/add", body)
 
+    def refound_project(self, project_id: str) -> dict[str, Any]:
+        """POST /api/projects/refound — reset charter/queue; keep append-only history."""
+        if self.demo_mode:
+            if not any(p.get("id") == project_id for p in self._demo_projects):
+                raise ClientError(
+                    message=f"no such project: {project_id}",
+                    code="bad_request",
+                    status=400,
+                )
+            self._demo_phases[project_id] = "none"
+            self._demo_queues[project_id] = []
+            self._demo_files = {
+                k: v
+                for k, v in self._demo_files.items()
+                if not k.startswith(f"{project_id}:")
+            }
+            return {
+                "ok": True,
+                "backup": "demo://refound",
+                "note_preserved": True,
+                "kept": ["working-record.jsonl"],
+            }
+        return self._post("/api/projects/refound", {"id": project_id})
+
     def queue(self, project_id: str, *, mutate: bool = False) -> dict[str, Any]:
         if self.demo_mode:
             entries = self._demo_queues.setdefault(project_id, [])

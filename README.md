@@ -53,7 +53,7 @@ herdr server reload-config
 | `p` | Project |
 | `n` | Register a folder |
 | `r` | Refresh |
-| `Ctrl+K` | Palette (compact / clear session / …) |
+| `Ctrl+K` | Palette (compact / clear session / refound / …) |
 | `Tab` | Cycle focus |
 | `q` / `Ctrl+C` | Quit |
 
