@@ -11,7 +11,8 @@ Research notes: [`.local/`](.local/)
 
 ## Run
 
-Core server should be up (or use demo mode):
+Core server should be up (or use demo mode). With both this package and
+`kettle-core` installed, bare `kettle` execs the TUI; `kettle-web` is the HTTP host.
 
 ```sh
 cd ~/cloud/git-projects/kettle-tui
