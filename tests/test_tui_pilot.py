@@ -43,7 +43,7 @@ def test_failed_sweep_health_shows_on_status():
         async with app.run_test(size=(120, 40)) as pilot:
             assert await _settle(pilot, lambda: bool(app.state.entries))
             assert app.state.sweep_health.get("state") == "failed"
-            assert sweep_health_status(app.state.sweep_health) == "last sweep failed"
+            assert sweep_health_status(app.state.sweep_health) == "last batch did not finish"
 
     asyncio.run(run())
 

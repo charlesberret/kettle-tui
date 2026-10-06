@@ -2,7 +2,7 @@ id = "kettle-tui"
 name = "kettle"
 version = "0.0.1"
 min_herdr_version = "0.9.0"
-description = "Open a Kettle review sitting as a Herdr tab for this directory."
+description = "Open Kettle for the project in this directory, as a Herdr tab."
 platforms = ["linux", "macos"]
 
 # The sitting is a full three-column TUI. A split pane is too tight; a tab
@@ -18,8 +18,8 @@ command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/herdr/run-sitting.sh\""]
 
 [[actions]]
 id = "open"
-title = "kettle: sitting for this directory"
-description = "Open or focus a Kettle sitting bound to this pane's directory."
+title = "kettle: project for this directory"
+description = "Open or focus Kettle for the project in this pane's directory."
 contexts = ["global", "pane", "workspace"]
 command = ["bash", "herdr/open.sh"]
 

@@ -2,11 +2,16 @@
 
 Layout (see kettle-core/docs/UI-STRUCTURE.md + desktop v2):
 
-    Queue  ·  Editor  ·  Desk (brief → ritual → stream → composer)
+    Queue  ·  Editor  ·  Agent (summary → ritual → stream → composer)
+
+Words on screen come from core's copy catalog (``self.uicopy``, SITTING-FLOWS §7)
+wherever a key exists. Identifiers — ``sweep``, ``desk``, ``found`` in method and
+widget names — are contract, not copy, and stay.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 import tempfile
@@ -37,11 +42,14 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 # Column width defaults / clamps (terminal cells).
-# Desk min = room for the three ritual keycaps without clipping:
-#   "a·approve" (9) + "c·comment" (9) + "s·sweep" (7)
-#   + inter-button margins (1×2) + button pad (2×3) + desk pad (2) = 35
+# Agent-pane min = room for the four ritual keycaps without clipping, at the
+# catalog's current words (longest state of each):
+#   "a·approve" (9) + "c·comment" (9) + "x·bring back" (12) + "f·finish" (8)
+#   + Button line-pad (1 each side × 4 = 8) + desk pad (2) = 48
+# Keycaps carry no margin or padding; Textual's line-pad (which cannot be 0)
+# is the separator.
 QUEUE_W_DEFAULT = 28
-DESK_STRIP_MIN = 35  # hard floor so a·approve / c·comment / s·sweep always fit
+DESK_STRIP_MIN = 48  # hard floor so the four ritual keycaps always fit
 DESK_W_DEFAULT = 52
 QUEUE_W_MIN, QUEUE_W_MAX = 18, 48
 DESK_W_MIN, DESK_W_MAX = DESK_STRIP_MIN, 80
@@ -53,13 +61,21 @@ from .client import (
     default_project_id,
     default_project_name,
     founding_steps,
+    is_handled,
     is_missing_project_folder,
+    is_proposal_entry,
+    is_set_aside,
     normalize_phase,
     ritual_controls,
     sort_queue,
     sweep_health_detail,
     sweep_health_status,
 )
+from .uicopy import UiCopy
+
+# Transient, event-specific messages (not flow states) that the catalog does not
+# cover. Plain words only — see kettle-core docs/UI.md § Who the words are for.
+BUSY = "the agent is still working"
 
 # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -114,16 +130,27 @@ def _urgency_style(urgency: str | None) -> str:
     }.get(u, "dim")
 
 
-def _brief_md(entry: dict[str, Any] | None) -> str:
+def _brief_md(entry: dict[str, Any] | None, empty: str = "") -> str:
+    """The summary region: the file's question and summary, or an empty-state line."""
     if not entry:
-        return ""
+        return empty
     ask = (entry.get("ask") or "").strip()
-    brief = (entry.get("brief") or "").strip() or "_No brief._"
+    brief = (entry.get("brief") or "").strip() or "_No summary._"
     parts = []
     if ask:
         parts.append(f"> {ask}\n")
     parts.append(brief)
     return "\n".join(parts)
+
+
+def _copy_of(node: Any) -> UiCopy:
+    """The running app's catalog, or the literals before the app exists."""
+    try:
+        app = node.app
+    except Exception:
+        return UiCopy()
+    copy = getattr(app, "uicopy", None)
+    return copy if isinstance(copy, UiCopy) else UiCopy()
 
 
 def _is_approved(entry: dict[str, Any] | None) -> bool:
@@ -231,8 +258,14 @@ class QueueItem(ListItem):
     def compose(self) -> ComposeResult:
         e = self.entry
         fname = _file_name(e)
-        ruled = _is_approved(e) or (e.get("status") or "").lower() == "rework"
-        style = "dim" if ruled else "bold"
+        # Handled files are quiet; a file set aside is quieter still (italic),
+        # the TUI's version of the reference sitting's .setaside row.
+        if is_set_aside(e):
+            style = "dim italic"
+        elif is_handled(e) or _is_approved(e):
+            style = "dim"
+        else:
+            style = "bold"
         urg = e.get("urgency")
         note = " [#f9e2af]·[/]" if e.get("comment") else ""
         diff = _diff_label(e.get("diff"))
@@ -243,7 +276,7 @@ class QueueItem(ListItem):
         )
         line2 = _second_line(e)
         if line2:
-            yield Label(f"[dim]{line2}[/]")
+            yield Label(f"[dim italic]{line2}[/]" if is_set_aside(e) else f"[dim]{line2}[/]")
 
 
 class QueuePane(Vertical):
@@ -253,7 +286,7 @@ class QueuePane(Vertical):
     project_label: reactive[str] = reactive("—")
 
     def compose(self) -> ComposeResult:
-        yield Static("queue", classes="pane-title")
+        yield Static(UiCopy().text("queueTitle").lower(), classes="pane-title")
         yield Static("—", id="project-label", classes="project-label")
         yield ListView(id="queue-list")
 
@@ -271,8 +304,11 @@ class QueuePane(Vertical):
         lv.clear()
         for e in self.entries:
             lv.append(QueueItem(e))
+        self.paint_title()
+
+    def paint_title(self) -> None:
         title = self.query_one(".pane-title", Static)
-        title.update(f"queue  {len(self.entries)}")
+        title.update(f"{_copy_of(self).text('queueTitle').lower()}  {len(self.entries)}")
 
 
 class EditorPane(Vertical):
@@ -305,24 +341,45 @@ class EditorPane(Vertical):
         return self.query_one("#editor", TextArea).text
 
 
+def keycap(key: str, label: str) -> str:
+    """``a·approve`` — the key, then the catalog word in the TUI's lowercase key style."""
+    return f"{key}·{label.lower()}"
+
+
 class DeskPane(Vertical):
-    """Right: step banner → brief → ritual / founding actions → stream → composer."""
+    """Right (the agent pane): step banner → summary → ritual / setup actions → stream
+    → composer. The class keeps its old name; it is an identifier, not copy."""
 
     def compose(self) -> ComposeResult:
-        yield Static("desk", classes="pane-title")
+        c = UiCopy()
+        yield Static("agent", classes="pane-title")
         # Wizard-style step strip (tuillem/dialog pattern: Step N/M · title)
         yield Static("", id="founding-step", classes="founding-step")
         with VerticalScroll(id="brief-scroll"):
             yield Markdown("", id="brief-md")
         # One-row keycap strip — shortcuts are primary; clicks are secondary (TUI density).
+        # Order follows the reference sitting: Approve · Comment · Not this · Finish batch.
         with Horizontal(id="ritual", classes="action-strip"):
-            yield Button("a·approve", id="btn-approve", compact=True, flat=True)
-            yield Button("c·comment", id="btn-comment", compact=True, flat=True)
-            yield Button("s·sweep", id="btn-sweep", compact=True, flat=True)
+            yield Button(
+                keycap("a", c.keycap("approveLabel")), id="btn-approve", compact=True, flat=True
+            )
+            yield Button(
+                keycap("c", c.keycap("commentLabel")), id="btn-comment", compact=True, flat=True
+            )
+            yield Button(
+                keycap("x", c.keycap("notThisLabel")), id="btn-not-this", compact=True, flat=True
+            )
+            yield Button(
+                keycap("f", c.keycap("sweepLabel")), id="btn-sweep", compact=True, flat=True
+            )
         with Horizontal(id="founding-actions", classes="action-strip founding-actions"):
             yield Button("i·interview", id="btn-interview", compact=True, flat=True)
-            yield Button("d·draft", id="btn-propose", compact=True, flat=True)
-            yield Button("found", id="btn-found", compact=True, flat=True)
+            yield Button(
+                keycap("d", c.keycap("draftProposalLabel")),
+                id="btn-propose",
+                compact=True,
+                flat=True,
+            )
         yield Static("", id="comment-hint", classes="hint")
         yield RichLog(
             id="stream",
@@ -333,12 +390,13 @@ class DeskPane(Vertical):
         )
         yield Input(placeholder="", id="composer")
 
-    def show_brief(self, entry: dict[str, Any] | None) -> None:
-        self.query_one("#brief-md", Markdown).update(_brief_md(entry))
+    def show_brief(self, entry: dict[str, Any] | None, empty: str = "") -> None:
+        self.query_one("#brief-md", Markdown).update(_brief_md(entry, empty))
 
-    def set_founding_chrome(self, phase: str) -> None:
-        """Show/hide step banner + founding buttons for the current phase."""
-        step_i, step_n, title = founding_steps(phase)
+    def set_founding_chrome(self, phase: str, copy: UiCopy | None = None) -> None:
+        """Show/hide step banner + setup buttons for the current phase."""
+        c = copy or UiCopy()
+        step_i, step_n, title = founding_steps(phase, c)
         banner = self.query_one("#founding-step", Static)
         actions = self.query_one("#founding-actions")
         ritual = self.query_one("#ritual")
@@ -353,35 +411,21 @@ class DeskPane(Vertical):
             return
 
         banner.display = True
-        actions.display = True
-        # During founding, ritual is hidden (except proposing uses approve→found)
-        if phase == "proposing":
-            ritual.display = True
-            actions.display = True
-        else:
-            ritual.display = False
+        # While proposing the ritual strip is the setup control: Approve on the
+        # proposal sets the project up (SITTING-FLOWS §3.5). No separate button.
+        ritual.display = phase == "proposing"
+        actions.display = phase in ("none", "interviewing")
 
         # Phase label only (state), not usage instructions
         banner.update(f"  {step_i}/{step_n}  {title}")
 
         bi = self.query_one("#btn-interview", Button)
         bp = self.query_one("#btn-propose", Button)
-        bf = self.query_one("#btn-found", Button)
-        bi.display = phase in ("none", "interviewing")
-        bp.display = phase in ("none", "interviewing")
-        bf.display = phase == "proposing"
-        # Primary emphasis via enabled state
         bi.disabled = phase not in ("none", "interviewing")
         bp.disabled = phase not in ("none", "interviewing")
-        bf.disabled = phase != "proposing"
-        if phase == "none":
-            bi.label = "i·interview"
-            bp.label = "d·draft"
-        elif phase == "interviewing":
-            bi.label = "i·again"
-            bp.label = "d·draft"
-        elif phase == "proposing":
-            bf.label = "found"
+        bi.label = "i·again" if phase == "interviewing" else "i·interview"
+        bp.label = keycap("d", c.keycap("draftProposalLabel"))
+        bp.tooltip = c.text("draftProposalHint")
 
     def set_ritual(
         self,
@@ -389,15 +433,45 @@ class DeskPane(Vertical):
         can_approve: bool,
         can_comment: bool,
         can_sweep: bool,
-        approve_label: str = "Approve",
+        can_not_this: bool = False,
+        approve_hint_key: str = "approveHint",
+        not_this_label_key: str = "notThisLabel",
+        not_this_hint_key: str = "notThisHint",
+        copy: UiCopy | None = None,
+        **_: Any,
     ) -> None:
+        c = copy or UiCopy()
         ba = self.query_one("#btn-approve", Button)
         bc = self.query_one("#btn-comment", Button)
+        bn = self.query_one("#btn-not-this", Button)
         bs = self.query_one("#btn-sweep", Button)
-        # Keep key·action labels short; founding uses a·found
-        ba.label = "a·found" if approve_label == "Found Desk" else "a·approve"
+        # One word for Approve in every phase; the proposal changes only the hint.
+        ba.label = keycap("a", c.keycap("approveLabel"))
+        ba.tooltip = c.text(approve_hint_key)
+        bc.label = keycap("c", c.keycap("commentLabel"))
+        bc.tooltip = c.text("commentHint")
+        bn.label = keycap("x", c.keycap(not_this_label_key))
+        bn.tooltip = c.text(not_this_hint_key)
+        bs.label = keycap("f", c.keycap("sweepLabel"))
+        bs.tooltip = c.text("sweepHint")
+        # Textual does not re-measure an auto-width Button when its label changes,
+        # so size each keycap to its label (+2 for line-pad). Not this takes the
+        # wider of its two states so the strip does not jump on Bring back.
+        widest_not_this = max(
+            len(keycap("x", c.keycap("notThisLabel"))),
+            len(keycap("x", c.keycap("notThisUndoLabel"))),
+        )
+        for b, n in (
+            (ba, len(str(ba.label))),
+            (bc, len(str(bc.label))),
+            (bn, widest_not_this),
+            (bs, len(str(bs.label))),
+        ):
+            if b.styles.width is None or b.styles.width.value != n + 2:
+                b.styles.width = n + 2
         ba.disabled = not can_approve
         bc.disabled = not can_comment
+        bn.disabled = not can_not_this
         bs.disabled = not can_sweep
 
     def stream_write(self, text: str, *, style: str | None = None) -> None:
@@ -417,16 +491,22 @@ class DeskPane(Vertical):
 class CommentModal(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, initial: str = "") -> None:
+    def __init__(self, initial: str = "", copy: UiCopy | None = None) -> None:
         super().__init__()
         self._initial = initial
+        self._copy = copy or UiCopy()
 
     def compose(self) -> ComposeResult:
+        c = self._copy
         with Vertical(id="modal"):
-            yield Static("comment — note for the sweep", classes="pane-title")
+            label = c.text("commentLabel").lower()
+            tied = c.text("commentTiedHint", short=True).lower()
+            yield Static(f"{label} — {tied}", classes="pane-title")
             yield TextArea(id="comment-body", soft_wrap=True)
             with Horizontal(classes="modal-actions"):
-                yield Button("save", id="comment-save", variant="primary")
+                yield Button(
+                    c.text("commentSaveLabel").lower(), id="comment-save", variant="primary"
+                )
                 yield Button("cancel", id="comment-cancel")
 
     def on_mount(self) -> None:
@@ -447,19 +527,25 @@ class CommentModal(ModalScreen[str | None]):
 
 
 class SweepModal(ModalScreen[str | None]):
-    """Confirm sweep; optional thrust steers the curator. None = cancel."""
+    """Confirm Finish batch (a sweep); the optional note steers the agent. None = cancel."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
+    def __init__(self, copy: UiCopy | None = None) -> None:
+        super().__init__()
+        self._copy = copy or UiCopy()
+
     def compose(self) -> ComposeResult:
+        c = self._copy
         with Vertical(id="modal"):
-            yield Static("sweep — close this sitting", classes="pane-title")
+            yield Static(c.text("sweepConfirmTitle"), classes="pane-title")
+            yield Static(c.text("sweepConfirmBody"), id="sweep-body", classes="modal-body")
             yield Input(
-                placeholder="",
+                placeholder=c.text("sweepThrustPlaceholder", short=True),
                 id="sweep-thrust",
             )
             with Horizontal(classes="modal-actions"):
-                yield Button("run sweep", id="sweep-go", variant="primary")
+                yield Button(c.text("sweepLabel").lower(), id="sweep-go", variant="primary")
                 yield Button("cancel", id="sweep-cancel")
 
     def on_mount(self) -> None:
@@ -588,7 +674,8 @@ class ProjectPicker(ModalScreen[str | None]):
             kit = p.get("kit") or ""
             label = f"{name}  [dim]{pid}" + (f" · {kit}" if kit else "") + f"{mark}[/]"
             ol.add_option(Option(label, id=pid))
-        ol.add_option(Option("[dim]+ register a folder…[/]", id="__register__"))
+        add = _copy_of(self).text("addProjectTitle", short=True).lower()
+        ol.add_option(Option(f"[dim]+ {add}…[/]", id="__register__"))
         ol.focus()
 
     @on(OptionList.OptionSelected, "#project-list")
@@ -617,23 +704,20 @@ class RegisterDeskModal(ModalScreen[RegisterDraft | None]):
         self._default_root = default_root
 
     def compose(self) -> ComposeResult:
+        c = _copy_of(self)
         with Vertical(id="modal-register"):
-            yield Static("register a folder", classes="pane-title")
-            yield Static(
-                "In a sentence or two: what is this, and what do you want "
-                "from a second reader here?",
-                classes="hint",
-            )
+            yield Static(c.text("addProjectTitle", short=True).lower(), classes="pane-title")
+            yield Static(c.text("addProjectFoundingQuestion"), classes="hint")
             yield Input(
                 value=self._default_root,
-                placeholder="folder path (~/… or absolute)",
+                placeholder=c.text("addProjectFolderPlaceholder"),
                 id="reg-root",
             )
-            yield Input(placeholder="name (optional — from folder)", id="reg-name")
+            yield Input(placeholder=c.text("addProjectNamePlaceholder"), id="reg-name")
             yield TextArea(id="reg-note", soft_wrap=True)
             yield Static("", id="reg-err")
             with Horizontal(classes="modal-actions"):
-                yield Button("register", id="reg-go", variant="primary")
+                yield Button(c.text("addProjectStart").lower(), id="reg-go", variant="primary")
                 yield Button("cancel", id="reg-cancel")
 
     def on_mount(self) -> None:
@@ -655,7 +739,7 @@ class RegisterDeskModal(ModalScreen[RegisterDraft | None]):
             self.query_one("#reg-root", Input).focus()
             return None
         if not note:
-            err.update("founding sentence required")
+            err.update("a sentence about the project is required")
             self.query_one("#reg-note", TextArea).focus()
             return None
         typed = self.query_one("#reg-name", Input).value.strip()
@@ -690,22 +774,25 @@ class CommandPalette(ModalScreen[str | None]):
             yield OptionList(id="palette-list")
 
     def on_mount(self) -> None:
+        c = _copy_of(self)
+        # Command ids are identifiers (contract); the labels are what a user reads.
         self._cmds = [
             ("refresh", "Refresh queue", "r"),
             ("save", "Save file", "Ctrl+S"),
-            ("approve", "Approve entry", "a"),
-            ("comment", "Comment on entry", "c"),
-            ("sweep", "Sweep sitting", "s"),
+            ("approve", c.text("approveLabel"), "a"),
+            ("comment", c.text("commentLabel"), "c"),
+            ("not-this", f"{c.text('notThisLabel')} / {c.text('notThisUndoLabel')}", "x"),
+            ("sweep", c.text("sweepLabel"), "f"),
             ("toggle-diff", "Toggle diff", "v"),
             ("external-editor", "External editor", "Ctrl+E"),
             ("compact", "Compact session", ""),
             ("clear-session", "Clear session", ""),
-            ("refound-desk", "Refound this desk", ""),
-            ("begin-interview", "Begin founding interview", "i"),
-            ("draft-proposal", "Draft desk proposal", "d"),
-            ("found-desk", "Found desk", ""),
+            ("refound-desk", c.text("refoundTitle").rstrip("?"), ""),
+            ("begin-interview", "Start the interview", "i"),
+            ("draft-proposal", c.text("draftProposalLabel"), "d"),
+            ("found-desk", c.text("approveHintFounding"), ""),
             ("pick-project", "Switch project", "p"),
-            ("register-desk", "Register a folder", "n"),
+            ("register-desk", c.text("addProjectTitle", short=True), "n"),
             ("focus-queue", "Focus queue", ""),
             ("focus-editor", "Focus editor", ""),
             ("focus-composer", "Focus composer", ""),
@@ -756,23 +843,25 @@ class HelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         # Help is the only place for usage copy — never on the sitting chrome.
-        text = """\
+        c = _copy_of(self)
+        text = f"""\
 # kettle-tui
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Queue |
-| `Enter` | Open entry |
-| `a` | Approve / Found desk |
-| `c` | Comment |
-| `s` | Sweep |
+| `Enter` | Open file |
+| `a` | {c.text("approveLabel")} |
+| `c` | {c.text("commentLabel")} |
+| `x` | {c.text("notThisLabel")} / {c.text("notThisUndoLabel")} |
+| `f` | {c.text("sweepLabel")} |
 | `v` | Diff / file |
 | `Ctrl+E` | `$EDITOR` |
 | `i` | Interview |
-| `d` | Draft proposal |
+| `d` | {c.text("draftProposalLabel")} |
 | `Ctrl+S` | Save |
 | `p` | Project |
-| `n` | Register a folder |
+| `n` | {c.text("addProjectTitle", short=True)} |
 | `r` | Refresh |
 | `Ctrl+K` | Palette |
 | `Tab` | Cycle focus |
@@ -805,11 +894,15 @@ class DeskState:
     view_mode: str = "file"  # file | diff
     file_abs: str | None = None  # absolute path when known (for $EDITOR)
     sweep_health: dict[str, Any] = field(default_factory=dict)
+    # Which long stream is running, for the status line: "sweeping" | "founding" | None.
+    activity: str | None = None
+    # The project could not be read (queue_corrupt / folder missing): states.broken.
+    broken: bool = False
 
 
 class KettleTui(App[None]):
     TITLE = "kettle-tui"
-    SUB_TITLE = "sitting"
+    SUB_TITLE = ""
 
     CSS = """
     Screen {
@@ -845,8 +938,8 @@ class KettleTui(App[None]):
     }
     #desk-pane {
         width: 52;
-        /* Must stay ≥ DESK_STRIP_MIN so a·approve / c·comment / s·sweep fit */
-        min-width: 35;
+        /* Must stay ≥ DESK_STRIP_MIN so the four ritual keycaps fit */
+        min-width: 48;
         max-width: 80;
         background: #181825;
         padding: 0 1;
@@ -959,21 +1052,17 @@ class KettleTui(App[None]):
         height: 1;
         min-height: 1;
         max-height: 1;
-        margin: 0 1 0 0;
-        padding: 0 1;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
         border: none;
         background: transparent;
         text-style: none;
         content-align: left middle;
         overflow: hidden;
     }
-    /* Natural widths for keycaps — desk min-width is sized to their sum */
-    #btn-approve { min-width: 11; }   /* a·approve + pad */
-    #btn-comment { min-width: 11; }   /* c·comment + pad */
-    #btn-sweep { min-width: 9; }      /* s·sweep + pad */
-    #btn-interview { min-width: 12; } /* i·interview + pad */
-    #btn-propose { min-width: 9; }
-    #btn-found { min-width: 7; }
+    /* Keycap widths follow their (catalog) labels; DESK_STRIP_MIN is sized to
+       the longest state of each. */
     .action-strip Button:last-of-type { margin-right: 0; }
     .action-strip Button:hover {
         background: #313244;
@@ -991,10 +1080,12 @@ class KettleTui(App[None]):
     }
     #btn-approve { color: #74c7ec; }
     #btn-comment { color: #f9e2af; }
+    /* Not this is a correction, not the action a batch is built around:
+       the quietest of the four (SITTING-FLOWS §2.3a). */
+    #btn-not-this { color: #7f849c; text-style: italic; }
     #btn-sweep { color: #a6e3a1; }
     #btn-interview { color: #cba6f7; }
     #btn-propose { color: #cba6f7; }
-    #btn-found { color: #cba6f7; }
 
     #stream {
         height: 1fr;
@@ -1015,8 +1106,9 @@ class KettleTui(App[None]):
     }
     #composer:focus { background: #45475a; }
 
+    /* In the flow (not docked): docking it bottom put it under the Footer, which
+       hid every status line. #body is 1fr, so this row sits just above the Footer. */
     #status {
-        dock: bottom;
         height: 1;
         width: 100%;
         background: #11111b;
@@ -1048,6 +1140,7 @@ class KettleTui(App[None]):
         overflow-x: hidden;
     }
     #modal-help { height: auto; padding: 1 2; }
+    .modal-body { color: #a6adc8; height: auto; padding: 1 1 0 1; }
     #sweep-thrust {
         margin: 1 0;
         background: #313244;
@@ -1082,14 +1175,20 @@ class KettleTui(App[None]):
         Binding("question_mark", "help", "Help"),
         Binding("r", "refresh", "Refresh"),
         Binding("p", "pick_project", "Project"),
-        Binding("n", "register_desk", "Register", show=False),
+        Binding("n", "register_desk", "Add project", show=False),
+        # Ritual descriptions are the catalog's words; _relabel_bindings() swaps in
+        # the live catalog once core answers. These literals equal its text.
         Binding("a", "approve", "Approve"),
         Binding("c", "comment", "Comment"),
-        Binding("s", "sweep", "Sweep"),
+        Binding("x", "not_this", "Not this"),
+        Binding("f", "sweep", "Finish"),
+        # `s` was the old key for the same action; kept off the footer for hands
+        # that still reach for it.
+        Binding("s", "sweep", "Finish", show=False),
         Binding("v", "toggle_diff", "Diff"),
         Binding("ctrl+e", "external_editor", "Editor"),
         Binding("i", "begin_interview", "Interview"),
-        Binding("d", "draft_proposal", "Propose"),
+        Binding("d", "draft_proposal", "Auto-mode"),
         Binding("ctrl+s", "save", "Save"),
         Binding("ctrl+k", "palette", "Palette"),
         Binding("colon", "palette", "Palette", show=False),
@@ -1113,6 +1212,8 @@ class KettleTui(App[None]):
         self._here = here
         self._require_here = require_here
         self.state = DeskState()
+        # Literals until core answers (load_desk); never None.
+        self.uicopy = UiCopy()
         self.queue_width = QUEUE_W_DEFAULT
         self.desk_width = DESK_W_DEFAULT
         self._offered_register = False
@@ -1184,13 +1285,71 @@ class KettleTui(App[None]):
 
     # ── data ────────────────────────────────────────────────────────────
 
+    # Footer descriptions that come from the catalog: action → (key, short?).
+    BINDING_COPY: dict[str, tuple[str, bool]] = {
+        "approve": ("approveLabel", False),
+        "comment": ("commentLabel", False),
+        "not_this": ("notThisLabel", False),
+        "sweep": ("sweepLabel", True),
+        "draft_proposal": ("draftProposalLabel", True),
+        "register_desk": ("addProjectTitle", True),
+    }
+
+    def apply_copy(self, copy: UiCopy) -> None:
+        """Adopt a catalog and repaint every label that reads from it."""
+        self.uicopy = copy
+        self._relabel_bindings()
+        try:
+            self.query_one(QueuePane).paint_title()
+        except Exception:
+            pass
+
+    def _relabel_bindings(self) -> None:
+        """Rewrite footer descriptions from the catalog.
+
+        Textual has no public API to change a binding's description after start-up,
+        so this swaps entries in the app's binding map. If that internal moves in a
+        future Textual, the class-level literals (equal to the catalog) still show.
+        """
+        try:
+            k2b = self._bindings.key_to_bindings
+        except AttributeError:
+            return
+        for key, blist in list(k2b.items()):
+            fresh = []
+            for b in blist:
+                spec = self.BINDING_COPY.get(b.action)
+                if spec and b.description:
+                    text = self.uicopy.text(spec[0], short=spec[1])
+                    b = dataclasses.replace(b, description=text) if text else b
+                fresh.append(b)
+            k2b[key] = fresh
+        try:
+            self.refresh_bindings()
+        except Exception:
+            pass
+
+    def footer_descriptions(self) -> dict[str, str]:
+        """action → footer description, for tests and ``--check``-style probes."""
+        out: dict[str, str] = {}
+        try:
+            for blist in self._bindings.key_to_bindings.values():
+                for b in blist:
+                    if b.show and b.description:
+                        out.setdefault(b.action, b.description)
+        except AttributeError:
+            pass
+        return out
+
     @work(exclusive=True, thread=True)
     def load_desk(self) -> None:
+        copy = UiCopy()
         try:
             if not self.client.ensure_reachable():
                 raise ClientError(
                     message="cannot reach kettle core (and failed to spawn kettle --web)"
                 )
+            copy = self.client.ui_copy()
             ping = self.client.ping()
             projects = self.client.projects()
             pid = default_project_id(
@@ -1202,6 +1361,7 @@ class KettleTui(App[None]):
             entries: list[dict[str, Any]] = []
             iv: dict[str, Any] | None = None
             err: str | None = None
+            broken = False
             health: dict[str, Any] = {}
             if pid:
                 try:
@@ -1215,11 +1375,13 @@ class KettleTui(App[None]):
                             pass
                         entries = []
                         err = str(e)
+                        broken = True
                     elif e.code != "queue_corrupt":
                         raise
                     else:
                         entries = []
                         err = str(e)
+                        broken = True
                 try:
                     iv = self.client.interview_status(str(pid))
                 except ClientError as e:
@@ -1230,8 +1392,11 @@ class KettleTui(App[None]):
         except ClientError as e:
             ping, projects, pid, entries, iv, err = None, [], None, [], None, str(e)
             health = {}
+            broken = False
 
         def apply() -> None:
+            self.apply_copy(copy)
+            self.state.broken = broken
             self.state.projects = projects
             self.state.project_id = str(pid) if pid else None
             self.state.entries = entries
@@ -1267,6 +1432,7 @@ class KettleTui(App[None]):
             return
         projects = self.state.projects
         folder_gone = False
+        broken = False
         try:
             q = self.client.queue(pid, mutate=False)
             entries = sort_queue(list(q.get("entries") or []))
@@ -1280,18 +1446,21 @@ class KettleTui(App[None]):
         except ClientError as e:
             if is_missing_project_folder(e):
                 folder_gone = True
+                broken = True
                 try:
                     projects = self.client.projects()
                 except ClientError:
                     pass
                 entries, iv, err = [], self.state.interview_status, str(e)
             else:
+                broken = e.code == "queue_corrupt"
                 entries, iv, err = self.state.entries, self.state.interview_status, str(e)
         health = self._read_sweep_health(str(pid)) if not folder_gone else {}
 
         def apply() -> None:
             self.state.projects = projects
             self.state.sweep_health = health
+            self.state.broken = broken
             if folder_gone:
                 ids = {p.get("id") for p in projects}
                 self.state.error = err
@@ -1449,10 +1618,27 @@ class KettleTui(App[None]):
         qp.project_label = f"{self._project_name()}" + (f"  ({pid})" if pid else "")
         qp.entries = list(self.state.entries)
         self._sync_queue_index()
-        self.query_one(DeskPane).set_founding_chrome(self.state.phase)
+        self.query_one(DeskPane).set_founding_chrome(self.state.phase, self.uicopy)
         self._paint_status()
         self._paint_titles()
         self._paint_ritual()
+        # Footer shows only the keys that apply in this phase.
+        self.refresh_bindings()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide keys that do nothing in the current phase (keeps the footer readable).
+
+        Setup keys (interview, Auto-mode) go once the project is set up; the ritual
+        keys that need a set-up project (Comment, Not this, Finish batch) wait for it.
+        """
+        if not self.state.project_id:
+            return True
+        setting_up = self.state.phase != "founded"
+        if action in ("begin_interview", "draft_proposal") and not setting_up:
+            return False
+        if action in ("comment", "not_this", "sweep") and setting_up:
+            return False
+        return True
 
     def _sync_queue_index(self) -> None:
         lv = self.query_one("#queue-list", ListView)
@@ -1463,6 +1649,21 @@ class KettleTui(App[None]):
                 except Exception:
                     pass
                 break
+
+    def _resync_selection(self) -> None:
+        """After a re-sort, put the highlight and the summary back on the open file.
+
+        The queue list rebuilds asynchronously; a highlight event from the rebuild
+        would otherwise preview some other file's summary next to the open one.
+        """
+
+        def apply() -> None:
+            self._sync_queue_index()
+            entry = self._selected()
+            if entry:
+                self.query_one(DeskPane).show_brief(entry)
+
+        self.call_after_refresh(apply)
 
     def _paint_entry(
         self, entry: dict[str, Any], text: str, *, mode: str = "file"
@@ -1490,10 +1691,34 @@ class KettleTui(App[None]):
         self.state.view_mode = "file"
         self.state.file_abs = None
         desk = self.query_one(DeskPane)
-        desk.show_brief(None)
+        desk.show_brief(None, self._empty_state_text())
         self.query_one("#comment-hint", Static).update("")
         self._paint_ritual()
         self._paint_status()
+
+    def _flow_state(self) -> str | None:
+        """The SITTING-FLOWS state this project is in, as a catalog ``states`` name."""
+        if not self.state.project_id:
+            return None
+        if self.state.broken:
+            return "broken"
+        if self.state.activity in ("sweeping", "founding"):
+            return self.state.activity
+        phase = self.state.phase
+        if phase == "interviewing":
+            return "interviewing"
+        if phase == "proposing":
+            return "proposing"
+        if phase == "founded":
+            return "attached"
+        return None  # "none": setup has not started; no catalog state yet
+
+    def _empty_state_text(self) -> str:
+        """Summary region with no file selected: one sentence from the catalog."""
+        st = self._flow_state()
+        if st is None:
+            return ""
+        return self.uicopy.state(st, "short")
 
     def _paint_ritual(self) -> None:
         entry = self._selected()
@@ -1503,12 +1728,18 @@ class KettleTui(App[None]):
             approved=_is_approved(entry),
             streaming=self.state.streaming,
             phase=self.state.phase,
+            proposal=is_proposal_entry(entry),
+            set_aside=is_set_aside(entry),
         )
         self.query_one(DeskPane).set_ritual(
             can_approve=rc["can_approve"],
             can_comment=rc["can_comment"],
             can_sweep=rc["can_sweep"],
-            approve_label=rc["approve_label"],
+            can_not_this=rc["can_not_this"],
+            approve_hint_key=rc["approve_hint_key"],
+            not_this_label_key=rc["not_this_label_key"],
+            not_this_hint_key=rc["not_this_hint_key"],
+            copy=self.uicopy,
         )
 
     def _paint_titles(self) -> None:
@@ -1519,7 +1750,10 @@ class KettleTui(App[None]):
     def _paint_status(self) -> None:
         status = self.query_one("#status", Static)
         if self.state.error:
-            status.update(f"[bold #e06c75]error:[/] {self.state.error}")
+            head = (
+                self.uicopy.state("broken", "line") if self.state.broken else "error:"
+            )
+            status.update(f"[bold #e06c75]{head}[/] {self.state.error}")
             return
         bits: list[str] = []
         if self.client.demo_mode:
@@ -1530,11 +1764,7 @@ class KettleTui(App[None]):
         ping = self.state.ping
         if isinstance(ping, dict) and ping.get("api_version") is not None:
             bits.append(f"api {ping.get('api_version')}")
-        pending = sum(
-            1
-            for e in self.state.entries
-            if (e.get("status") or "pending") == "pending"
-        )
+        pending = sum(1 for e in self.state.entries if not is_handled(e))
         if self._require_here and not self.state.project_id:
             loc = self._here or os.getcwd()
             try:
@@ -1544,19 +1774,25 @@ class KettleTui(App[None]):
             home = str(Path.home())
             if loc.startswith(home + os.sep):
                 loc = "~" + loc[len(home) :]
-            bits.append(f"no desk for {loc}")
-        if self.state.phase != "founded":
-            bits.append(f"[#cba6f7]{self.state.phase}[/]")
+            bits.append(f"no project for {loc}")
+        # The state line from the catalog — never the raw phase identifier.
+        flow = self._flow_state()
+        if flow in ("interviewing", "proposing", "founding", "sweeping"):
+            bits.append(f"[#cba6f7]{self.uicopy.state(flow, 'line')}[/]")
+        elif self.state.project_id and self.state.phase == "none":
+            bits.append(f"[#cba6f7]{self.uicopy.text('foundingHeadTitle')}[/]")
+        elif flow == "attached" and not self.state.selected_id:
+            bits.append(self.uicopy.state("attached", "line"))
         bits.append(f"{pending}/{len(self.state.entries)} pending")
         if self.state.selected_id:
-            bits.append(str(self.state.selected_id))
+            bits.append(_file_name(self._selected()))
         if self.state.view_mode == "diff":
             bits.append("diff")
         if self.state.dirty:
-            bits.append("[#e5c07b]dirty[/]")
-        if self.state.streaming:
-            bits.append("streaming…")
-        token = sweep_health_status(self.state.sweep_health)
+            bits.append("[#e5c07b]unsaved[/]")
+        if self.state.streaming and not self.state.activity:
+            bits.append(self.uicopy.text("spinWorking"))
+        token = sweep_health_status(self.state.sweep_health, self.uicopy)
         if token and not self.state.streaming:
             bits.append(f"[#e5c07b]{token}[/]")
         status.update("  ·  ".join(bits))
@@ -1598,6 +1834,10 @@ class KettleTui(App[None]):
     def on_comment_btn(self) -> None:
         self.action_comment()
 
+    @on(Button.Pressed, "#btn-not-this")
+    def on_not_this_btn(self) -> None:
+        self.action_not_this()
+
     @on(Button.Pressed, "#btn-sweep")
     def on_sweep_btn(self) -> None:
         self.action_sweep()
@@ -1609,10 +1849,6 @@ class KettleTui(App[None]):
     @on(Button.Pressed, "#btn-propose")
     def on_propose_btn(self) -> None:
         self.action_draft_proposal()
-
-    @on(Button.Pressed, "#btn-found")
-    def on_found_btn(self) -> None:
-        self.action_found_desk()
 
     @on(Input.Submitted, "#composer")
     def on_composer_submit(self, event: Input.Submitted) -> None:
@@ -1654,7 +1890,7 @@ class KettleTui(App[None]):
 
     def action_register_desk(self) -> None:
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
         default_root = self._here or os.getcwd()
 
@@ -1671,7 +1907,7 @@ class KettleTui(App[None]):
             self.notify("no project", severity="warning")
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
 
         def on_confirm(choice: str | None) -> None:
@@ -1681,10 +1917,11 @@ class KettleTui(App[None]):
 
         self.push_screen(
             ConfirmActionModal(
-                "Refound this desk?",
-                "Charter and live queue reset. History (lineage, archive, comments) stays. "
-                "The founding sentence is kept.",
-                ok_label="refound",
+                self.uicopy.text("refoundTitle"),
+                "Your project notes and the current queue are reset. History and "
+                "comments stay, and your description of the project is kept. Your own "
+                "files are never touched.",
+                ok_label="set up again",
             ),
             on_confirm,
         )
@@ -1699,15 +1936,19 @@ class KettleTui(App[None]):
 
         def apply() -> None:
             if err:
-                self.notify(f"refound failed: {err}", severity="error")
+                self.notify(f"could not reset the project: {err}", severity="error")
                 self.query_one(DeskPane).stream_write(
-                    f"refound error: {err}", style="#e06c75"
+                    f"reset error: {err}", style="#e06c75"
                 )
                 return
             kept = res.get("kept") or []
-            note = "founding sentence kept" if res.get("note_preserved") else "no founding sentence on file"
+            note = (
+                "your description of the project was kept"
+                if res.get("note_preserved")
+                else "no description of the project on file"
+            )
             desk = self.query_one(DeskPane)
-            desk.stream_write("— desk refounded —", style="#cba6f7")
+            desk.stream_write("— project reset for setup —", style="#cba6f7")
             desk.stream_write(note, style="dim")
             if kept:
                 desk.stream_write("kept: " + ", ".join(str(k) for k in kept[:8]), style="dim")
@@ -1717,7 +1958,7 @@ class KettleTui(App[None]):
             self.state.interview_status = {"founded": False, "status": "none"}
             self._paint_empty_entry()
             self._paint_shell()
-            self.notify("desk refounded", timeout=2)
+            self.notify("project reset", timeout=2)
 
             def offer(choice: str | None) -> None:
                 if choice == "ok":
@@ -1725,9 +1966,9 @@ class KettleTui(App[None]):
 
             self.push_screen(
                 ConfirmActionModal(
-                    "Begin founding interview?",
-                    "The desk is unfounded again. Start the interview now, or press i later.",
-                    ok_label="interview",
+                    "Start the interview?",
+                    "This project is not set up yet. Start now, or press i later.",
+                    ok_label=self.uicopy.text("addProjectStart", short=True).lower(),
                 ),
                 offer,
             )
@@ -1744,10 +1985,10 @@ class KettleTui(App[None]):
 
         def apply() -> None:
             if err:
-                self.notify(f"register failed: {err}", severity="error")
+                self.notify(f"could not add the project: {err}", severity="error")
                 try:
                     self.query_one(DeskPane).stream_write(
-                        f"register error: {err}", style="#e06c75"
+                        f"add project error: {err}", style="#e06c75"
                     )
                 except Exception:
                     pass
@@ -1755,7 +1996,7 @@ class KettleTui(App[None]):
             proj = res.get("project") if isinstance(res.get("project"), dict) else res
             pid = str((proj or {}).get("id") or res.get("id") or "")
             if not pid:
-                self.notify("register returned no project id", severity="error")
+                self.notify("core added the project but returned no id", severity="error")
                 return
             try:
                 self.state.projects = self.client.projects()
@@ -1763,9 +2004,9 @@ class KettleTui(App[None]):
                 pass
             self._preferred_project = pid
             self.state.project_id = pid
-            self.notify(f"registered {pid}", timeout=2)
+            self.notify(f"added {draft.name}", timeout=2)
             desk = self.query_one(DeskPane)
-            desk.stream_write(f"registered [{pid}] {draft.name}", style="#a6e3a1")
+            desk.stream_write(f"added {draft.name} ({pid})", style="#a6e3a1")
             self.send_interview("")
 
         self.call_from_thread(apply)
@@ -1838,7 +2079,7 @@ class KettleTui(App[None]):
                 proceed()
 
         self.push_screen(
-            DiscardModal("Open another entry? Unsaved editor changes will be lost."),
+            DiscardModal("Open another file? Unsaved editor changes will be lost."),
             on_choice,
         )
 
@@ -1860,7 +2101,7 @@ class KettleTui(App[None]):
             self.notify("no project", severity="warning")
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
 
         def on_confirm(thrust: str | None) -> None:
@@ -1877,13 +2118,13 @@ class KettleTui(App[None]):
                         self._start_sweep(thrust)
 
                 self.push_screen(
-                    DiscardModal("Sweep with unsaved editor changes?"),
+                    DiscardModal("Finish the batch with unsaved editor changes?"),
                     after_dirty,
                 )
             else:
                 self._start_sweep(thrust)
 
-        self.push_screen(SweepModal(), on_confirm)
+        self.push_screen(SweepModal(self.uicopy), on_confirm)
 
     def _start_sweep(self, thrust: str) -> None:
         pid = self.state.project_id
@@ -1891,11 +2132,9 @@ class KettleTui(App[None]):
             return
         desk = self.query_one(DeskPane)
         if thrust.strip():
-            desk.stream_write(f"steer for this sweep: {thrust.strip()}", style="#a6e3a1")
-        desk.stream_write(
-            "— sweep started: rulings · diff · assess · ripple · log · restock —",
-            style="dim",
-        )
+            desk.stream_write(f"your note for this batch: {thrust.strip()}", style="#a6e3a1")
+        desk.stream_write(f"— {self.uicopy.state('sweeping', 'line')} —", style="dim")
+        self.state.activity = "sweeping"
         self.state.streaming = True
         self.query_one(EditorPane).set_read_only(True)
         self._paint_ritual()
@@ -1923,13 +2162,14 @@ class KettleTui(App[None]):
 
         def done() -> None:
             self.state.streaming = False
+            self.state.activity = None
             self.query_one(EditorPane).set_read_only(self.state.view_mode == "diff")
             if err:
                 self.query_one(DeskPane).stream_write(
-                    f"sweep error: {err}", style="#e06c75"
+                    f"could not finish the batch: {err}", style="#e06c75"
                 )
             else:
-                self.query_one(DeskPane).stream_write("— sweep finished —", style="dim")
+                self.query_one(DeskPane).stream_write("— batch finished —", style="dim")
             if q_err:
                 self.query_one(DeskPane).stream_write(
                     f"queue reload failed: {q_err}", style="#e06c75"
@@ -1938,11 +2178,7 @@ class KettleTui(App[None]):
                 self.state.entries = entries
                 self._reselect_after_restock(entries)
                 self.query_one(QueuePane).entries = list(entries)
-                pending = [
-                    e
-                    for e in entries
-                    if (e.get("status") or "pending") == "pending"
-                ]
+                pending = [e for e in entries if not is_handled(e)]
                 desk = self.query_one(DeskPane)
                 if pending:
                     lines = [
@@ -1955,7 +2191,7 @@ class KettleTui(App[None]):
                         desk.stream_write(f"… +{len(pending) - 12} more", style="dim")
                 else:
                     desk.stream_write(
-                        "queue empty — review program may be exhausted",
+                        "queue empty — nothing more is lined up",
                         style="dim",
                     )
             self.state.sweep_health = health
@@ -1966,7 +2202,9 @@ class KettleTui(App[None]):
                 self._paint_empty_entry()
             self._paint_status()
             self._announce_sweep_health()
-            self.notify("sweep finished" if not err else "sweep failed", timeout=2)
+            self.notify(
+                "batch finished" if not err else "could not finish the batch", timeout=2
+            )
 
         self.call_from_thread(done)
 
@@ -1976,9 +2214,7 @@ class KettleTui(App[None]):
         cur = str(self.state.selected_id) if self.state.selected_id else ""
         if cur and cur in ids:
             return
-        pending = [
-            e for e in entries if (e.get("status") or "pending") == "pending"
-        ]
+        pending = [e for e in entries if not is_handled(e)]
         pick = pending[0] if pending else (entries[0] if entries else None)
         self.state.selected_id = pick.get("id") if pick else None
         if not self.state.selected_id:
@@ -2033,9 +2269,9 @@ class KettleTui(App[None]):
                 try:
                     subprocess.call([editor, path])  # noqa: S603
                 except OSError as e:
-                    self.call_from_thread(
-                        lambda: self.notify(f"editor failed: {e}", severity="error")
-                    )
+                    # Bind now: `e` is unbound once the except block ends.
+                    msg = f"editor failed: {e}"
+                    self.call_from_thread(lambda: self.notify(msg, severity="error"))
                     return
             # Reload from disk
             if self.state.selected_id:
@@ -2058,9 +2294,8 @@ class KettleTui(App[None]):
                     subprocess.call([editor, tmp])  # noqa: S603
                 new_text = Path(tmp).read_text(encoding="utf-8")
             except OSError as e:
-                self.call_from_thread(
-                    lambda: self.notify(f"editor failed: {e}", severity="error")
-                )
+                msg = f"editor failed: {e}"
+                self.call_from_thread(lambda: self.notify(msg, severity="error"))
                 return
             finally:
                 try:
@@ -2194,23 +2429,81 @@ class KettleTui(App[None]):
         if not entry or not pid:
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
-        if _is_approved(entry) and not (
-            entry.get("id") == "desk-proposal" or entry.get("founding_phase") == "proposal"
-        ):
+        if _is_approved(entry) and not is_proposal_entry(entry):
             self.notify("already approved", timeout=1.5)
             return
         self._approve_worker(pid, str(entry.get("id")))
+
+    def action_not_this(self) -> None:
+        """Not this / Bring back on the selected file (SITTING-FLOWS §2.3a).
+
+        One action: no prompt, no follow-up question. Off during setup and on the
+        proposal, which core refuses with 400 — that message is shown if it comes.
+        """
+        entry = self._selected()
+        pid = self.state.project_id
+        if not entry or not pid:
+            return
+        if self.state.streaming:
+            self.notify(BUSY, severity="warning")
+            return
+        if self.state.phase != "founded" or is_proposal_entry(entry):
+            return
+        self._set_aside_worker(pid, str(entry.get("id")), is_set_aside(entry))
+
+    @work(thread=True)
+    def _set_aside_worker(self, pid: str, eid: str, undo: bool) -> None:
+        try:
+            res = self.client.set_aside(pid, eid, undo=undo)
+            err = None
+        except ClientError as e:
+            res, err = {}, e.message or str(e)
+
+        def apply() -> None:
+            if err:
+                self.notify(err, severity="error")
+                return
+            entry = self._entry_by_id(eid)
+            if entry is None:
+                return
+            entry["status"] = str(res.get("status") or ("pending" if undo else "set-aside"))
+            if is_set_aside(entry):
+                entry.setdefault("set_aside", True)
+            else:
+                entry.pop("set_aside", None)
+            # The selection stays on this file so Bring back is one key away.
+            self.state.entries = sort_queue(self.state.entries)
+            self.query_one(QueuePane).entries = list(self.state.entries)
+            self._resync_selection()
+            self._paint_ritual()
+            self._paint_status()
+            name = _file_name(entry)
+            if undo:
+                self.query_one(DeskPane).stream_write(f"brought back {name}", style="dim")
+            else:
+                self.query_one(DeskPane).stream_write(f"set aside {name}", style="dim italic")
+
+        self.call_from_thread(apply)
+
+    def _setup_confirm(self) -> ConfirmActionModal:
+        """Approve on the proposal sets the project up; confirm before streaming."""
+        c = self.uicopy
+        return ConfirmActionModal(
+            "Approve the proposal?",
+            c.text("approveHintFounding"),
+            ok_label=c.text("approveLabel").lower(),
+        )
 
     def action_begin_interview(self) -> None:
         if not self.state.project_id:
             return
         if self.state.phase == "founded":
-            self.notify("desk already founded", timeout=2)
+            self.notify("this project is already set up", timeout=2)
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
         self.send_interview("")  # empty = kickoff
 
@@ -2219,24 +2512,28 @@ class KettleTui(App[None]):
         if not pid:
             return
         if self.state.phase == "founded":
-            self.notify("desk already founded", timeout=2)
+            self.notify("this project is already set up", timeout=2)
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
 
         def on_confirm(choice: str | None) -> None:
             if choice != "ok":
                 return
             desk = self.query_one(DeskPane)
-            desk.stream_write("— drafting desk proposal —", style="#cba6f7")
+            desk.stream_write("— drafting the proposal —", style="#cba6f7")
             self.state.streaming = True
             self._paint_ritual()
             self._paint_status()
             self._propose_worker(pid)
 
         self.push_screen(
-            ConfirmActionModal("Draft desk proposal?", "", ok_label="draft proposal"),
+            ConfirmActionModal(
+                "Write the proposal now?",
+                self.uicopy.text("draftProposalHint"),
+                ok_label=self.uicopy.text("draftProposalLabel", short=True).lower(),
+            ),
             on_confirm,
         )
 
@@ -2245,31 +2542,20 @@ class KettleTui(App[None]):
         if not pid:
             return
         if self.state.phase != "proposing":
-            self.notify("need a desk proposal first", severity="warning")
+            self.notify("no proposal yet", severity="warning")
             return
         if self.state.streaming:
-            self.notify("already streaming", severity="warning")
+            self.notify(BUSY, severity="warning")
             return
 
         def on_confirm(choice: str | None) -> None:
             if choice != "ok":
                 return
             entry = self._selected()
-            if not entry or not (
-                entry.get("id") == "desk-proposal"
-                or entry.get("founding_phase") == "proposal"
-            ):
-                entry = next(
-                    (
-                        e
-                        for e in self.state.entries
-                        if e.get("id") == "desk-proposal"
-                        or e.get("founding_phase") == "proposal"
-                    ),
-                    None,
-                )
+            if not is_proposal_entry(entry):
+                entry = next((e for e in self.state.entries if is_proposal_entry(e)), None)
             if not entry:
-                self.notify("need a desk proposal first", severity="warning")
+                self.notify("no proposal yet", severity="warning")
                 return
             try:
                 res = self.client.approve(pid, str(entry.get("id")))
@@ -2277,14 +2563,13 @@ class KettleTui(App[None]):
                 self.notify(f"approve failed: {e}", severity="error")
                 return
             if res.get("founding") is not True:
-                self.notify("approve was not a founding bookmark", severity="warning")
+                self.notify(
+                    "the proposal was approved, but setup did not start", severity="warning"
+                )
                 return
             self._begin_found_stream(pid)
 
-        self.push_screen(
-            ConfirmActionModal("Found this desk?", "", ok_label="found desk"),
-            on_confirm,
-        )
+        self.push_screen(self._setup_confirm(), on_confirm)
 
     def send_interview(self, message: str) -> None:
         pid = self.state.project_id
@@ -2294,7 +2579,7 @@ class KettleTui(App[None]):
         if message.strip():
             desk.stream_write(f"you: {message}", style="#89b4fa")
         else:
-            desk.stream_write("— starting founding interview —", style="#cba6f7")
+            desk.stream_write(f"— {self.uicopy.text('foundingHeadTitle')} —", style="#cba6f7")
         self.state.streaming = True
         self._paint_ritual()
         self._paint_status()
@@ -2333,11 +2618,11 @@ class KettleTui(App[None]):
             self.state.streaming = False
             if err:
                 self.query_one(DeskPane).stream_write(
-                    f"propose error: {err}", style="#e06c75"
+                    f"proposal error: {err}", style="#e06c75"
                 )
             else:
                 self.query_one(DeskPane).stream_write(
-                    "— proposal ready — edit center, then Found Desk —",
+                    f"— {self.uicopy.state('proposing', 'short')} —",
                     style="dim",
                 )
             self._refresh_phase()
@@ -2357,26 +2642,29 @@ class KettleTui(App[None]):
 
         def done() -> None:
             self.state.streaming = False
+            self.state.activity = None
+            c = self.uicopy
             if err:
                 self.query_one(DeskPane).stream_write(
-                    f"found error: {err}", style="#e06c75"
+                    f"setup error: {err}", style="#e06c75"
                 )
                 self._refresh_phase()
                 self._paint_status()
-                self.notify("found failed", timeout=2)
+                self.notify("setup did not finish", timeout=2)
                 return
             self._refresh_phase()
+            # §3.5: announce only when core says founded; otherwise render proposing.
             if self.state.phase == "founded":
                 self.query_one(DeskPane).stream_write(
-                    "— desk founded — sitting open —", style="#a6e3a1"
+                    f"— {c.state('founded', 'short')} —", style="#a6e3a1"
                 )
-                self.notify("desk founded", timeout=2)
+                self.notify(c.state("founded", "line"), timeout=2)
             else:
                 self.query_one(DeskPane).stream_write(
-                    "— found did not write the charter — proposal still open —",
+                    f"— setup did not finish. {c.state('proposing', 'short')} —",
                     style="#e5c07b",
                 )
-                self.notify("desk not founded — keep the proposal open", timeout=3)
+                self.notify(c.state("proposing", "line"), timeout=3)
             self._paint_status()
 
         self.call_from_thread(done)
@@ -2409,7 +2697,8 @@ class KettleTui(App[None]):
 
     def _begin_found_stream(self, pid: str) -> None:
         desk = self.query_one(DeskPane)
-        desk.stream_write("— founding desk —", style="#cba6f7")
+        desk.stream_write(f"— {self.uicopy.state('founding', 'line')} —", style="#cba6f7")
+        self.state.activity = "founding"
         self.state.streaming = True
         self._paint_ritual()
         self._paint_status()
@@ -2439,17 +2728,16 @@ class KettleTui(App[None]):
                         return
                     self._begin_found_stream(pid)
 
-                self.push_screen(
-                    ConfirmActionModal("Found this desk?", "", ok_label="found desk"),
-                    on_confirm,
-                )
+                self.push_screen(self._setup_confirm(), on_confirm)
                 return
             self.state.entries = sort_queue(self.state.entries)
             self.query_one(QueuePane).entries = list(self.state.entries)
+            self._resync_selection()
             self._paint_ritual()
             self._paint_status()
+            entry = self._entry_by_id(eid)
             self.query_one(DeskPane).stream_write(
-                f"approved {eid} (bookmark only — not applied)",
+                f"approved {_file_name(entry)} — nothing changes until you finish the batch",
                 style="#74c7ec",
             )
             self.notify("approved", timeout=1.5)
@@ -2469,7 +2757,7 @@ class KettleTui(App[None]):
                 return
             self._comment_worker(pid, eid, text)
 
-        self.push_screen(CommentModal(initial), done)
+        self.push_screen(CommentModal(initial, self.uicopy), done)
 
     @work(thread=True)
     def _comment_worker(self, pid: str, eid: str, text: str) -> None:
@@ -2496,7 +2784,9 @@ class KettleTui(App[None]):
             else:
                 hint.update("")
             self.query_one(DeskPane).stream_write(
-                "comment saved for sweep" if text.strip() else "comment cleared",
+                "comment saved — " + self.uicopy.text("commentTiedHint", short=True).lower()
+                if text.strip()
+                else "comment cleared",
                 style="#f9e2af",
             )
             self.notify("comment saved", timeout=1.5)
@@ -2558,6 +2848,7 @@ class KettleTui(App[None]):
             "save": self.action_save,
             "approve": self.action_approve,
             "comment": self.action_comment,
+            "not-this": self.action_not_this,
             "sweep": self.action_sweep,
             "toggle-diff": self.action_toggle_diff,
             "external-editor": self.action_external_editor,
