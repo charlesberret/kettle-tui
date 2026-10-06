@@ -1,13 +1,18 @@
 # kettle-tui
 
-Plugin-shaped terminal sitting for the Kettle review desk (**Shape B**):
+Terminal viewport for Kettle, plugin-shaped (**Shape B**):
 
 ```text
-Queue  ·  Editor  ·  Desk (brief → Approve · Comment · Sweep → stream → composer)
+Queue  ·  Editor  ·  Agent (summary → Approve · Comment · Not this · Finish batch → stream → composer)
 ```
 
 Product structure: [`kettle-core/docs/UI-STRUCTURE.md`](../kettle-core/docs/UI-STRUCTURE.md)  
 Research notes: [`.local/`](.local/)
+
+The words on screen come from kettle-core's copy catalog (`GET /api/ui-copy`), so a
+label changed there — or relabelled in the web app's UI debug mode — shows up here
+too. With no core, or one too old to serve the catalog, the TUI uses the same words
+built in.
 
 ## Run
 
@@ -17,17 +22,17 @@ Core server should be up (or use demo mode). With both this package and
 ```sh
 cd ~/cloud/git-projects/kettle-tui
 python3 -m venv .venv && .venv/bin/pip install -e .
-.venv/bin/kettle-tui --here             # desk for this directory
-.venv/bin/kettle-tui --project armada   # live, named desk
+.venv/bin/kettle-tui --here             # the project for this directory
+.venv/bin/kettle-tui --project armada   # live, named project
 .venv/bin/kettle-tui --demo             # offline
-.venv/bin/kettle-tui --check --here     # no TUI; exit 1 if this dir has no desk
+.venv/bin/kettle-tui --check --here     # no TUI; exit 1 if this directory has no project
 ```
 
-`--here` binds to the registered desk whose `root` is this directory (or an ancestor). It does not fall back to some other project.
+`--here` opens the registered project whose `root` is this directory (or an ancestor). It does not fall back to some other project.
 
 ## Herdr
 
-A sitting belongs in a **tab** on the directory you are already working in — not a cowbell harness (those raise agents).
+Kettle belongs in a **tab** on the directory you are already working in — not a cowbell harness (those raise agents).
 
 ```sh
 herdr plugin link ~/cloud/git-projects/kettle-tui
@@ -35,35 +40,51 @@ herdr plugin action invoke kettle-tui.install-keys   # prefix+k
 herdr server reload-config
 ```
 
-`prefix+k` (or the action **kettle: sitting for this directory**) opens a tab running `kettle-tui --here` at the focused pane's cwd. A second press focuses the existing sitting for that place.
+`prefix+k` (or the action **kettle: project for this directory**) opens a tab running `kettle-tui --here` at the focused pane's cwd. A second press focuses the one already open for that place.
 
 ## Keys
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Move queue |
-| `Enter` | Open entry in editor |
-| `a` | Approve (bookmark only) |
-| `c` | Comment for sweep |
-| `s` | Sweep |
+| `Enter` | Open file in editor |
+| `a` | Approve (marks your decision; nothing changes until you finish the batch) |
+| `c` | Comment — a note the agent reads when you finish the batch |
+| `x` | Not this — set the file aside; on a file already set aside, Bring back |
+| `f` | Finish batch — apply your decisions and line up the next files |
 | `v` | Toggle diff / file |
 | `Ctrl+E` | Open in `$VISUAL` / `$EDITOR` |
-| `i` | Founding interview |
-| `d` | Draft proposal |
+| `i` | Start the setup interview |
+| `d` | Auto-mode — let the agent write the proposal now |
 | `Ctrl+S` | Save |
 | `p` | Project |
-| `n` | Register a folder |
+| `n` | Add project |
 | `r` | Refresh |
-| `Ctrl+K` | Palette (compact / clear session / refound / …) |
+| `Ctrl+K` | Palette (compact / clear session / set up again / …) |
 | `Tab` | Cycle focus |
 | `q` / `Ctrl+C` | Quit |
 
-Composer: interview while founding, chat once founded. Drag `│` to resize columns.
+**Not this** is one key, no questions: the file is set aside, sinks to the bottom of
+the queue with the files you have already decided about, and the agent says what it
+took from it in the next round notes. It is off while a project is being set up and on
+the proposal itself. Approve reads the same while a proposal is open — approving the
+proposal is what sets the project up.
+
+Composer: the setup interview until the project is set up, chat after. Drag `│` to resize columns.
 
 ```sh
-.venv/bin/kettle-tui --demo --project new-desk   # founding
+.venv/bin/kettle-tui --demo --project new-desk   # a project not set up yet
 .venv/bin/kettle-tui --demo --project demo-desk
-.venv/bin/kettle-tui --project armada            # live; may spawn core
+.venv/bin/kettle-tui --project armada            # live; may start core
 ```
 
 Details: [`.local/spike-notes.md`](.local/spike-notes.md)
+
+## Tests
+
+```sh
+.venv/bin/pip install -e '.[dev]' && .venv/bin/python -m pytest -q
+```
+
+`tests/test_plain_copy.py` checks the built-in words against core's catalog when
+`KETTLE_UI_COPY=<kettle-core>/kettle/static/ui-copy.json` is set (skipped otherwise).

@@ -1,4 +1,9 @@
-"""Offline sample desk data for the TUI (Shape B)."""
+"""Offline sample desk data for the TUI (Shape B).
+
+Display strings here (project names, titles, briefs, asks) reach the screen in
+``--demo``, so they use the plain words a user reads. Ids stay as they are: they
+are identifiers, and ``--project demo-desk`` / ``new-desk`` are documented.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ from copy import deepcopy
 DEMO_PROJECTS = [
     {
         "id": "demo-desk",
-        "name": "Demo Desk",
+        "name": "Demo Project",
         "root": "/tmp/kettle-demo-desk",
         "kit": "code",
     },
@@ -19,7 +24,7 @@ DEMO_PROJECTS = [
     },
     {
         "id": "new-desk",
-        "name": "New Desk (founding)",
+        "name": "New Project (setup)",
         "root": "/tmp/kettle-demo-new",
         "kit": "code",
     },
@@ -35,24 +40,24 @@ DEMO_PHASES: dict[str, str] = {
 
 PROPOSAL_PATH = ".kettle/DESK-PROPOSAL.md"
 
-PROPOSAL_BODY = """# Desk Proposal
+PROPOSAL_BODY = """# Proposal
 
-## What This Desk Is For
+## What This Project Is For
 
-A local-first review instrument for agent-prepared work on **New Desk**.
+A local-first review instrument for agent-prepared work on **New Project**.
 
 ## Who Uses It
 
-You — reviewing work the curator prepares.
+You — reviewing work the agent prepares.
 
-## First Queue
+## First Batch
 
 1. README — orient and correct identity claims
-2. Architecture note — confirm desk-is-files
+2. Architecture note — confirm the files-first rule
 
 ## Notes From The Interview
 
-(Demo proposal — edit freely, then Found Desk.)
+(Demo proposal — edit freely, then approve it.)
 """
 
 _DEMO_QUEUES: dict[str, list[dict]] = {
@@ -79,11 +84,11 @@ _DEMO_QUEUES: dict[str, list[dict]] = {
             "title": "Architecture Map",
             "path": "docs/ARCHITECTURE.md",
             "brief": (
-                "A one-page map of packages and viewports. Check that the desk "
+                "A one-page map of packages and viewports. Check that the "
                 "boundary (files vs adapters) is stated clearly, and that the "
                 "API contract is named as the single authority."
             ),
-            "ask": "Confirm the viewport list and desk-is-files rule",
+            "ask": "Confirm the viewport list and the files-first rule",
             "urgency": "medium",
             "status": "pending",
             "ask_type": "review",
@@ -106,7 +111,7 @@ _DEMO_QUEUES: dict[str, list[dict]] = {
         },
         {
             "id": "approved-sample",
-            "title": "License Header (already ruled)",
+            "title": "License Header (already approved)",
             "path": "LICENSE",
             "brief": "MIT header checked against upstream; no further action.",
             "ask": "No ask — sample approved row",
@@ -133,7 +138,7 @@ _DEMO_QUEUES: dict[str, list[dict]] = {
 
 _DEMO_FILES: dict[str, str] = {
     "README.md": (
-        "# Demo Desk\n\n"
+        "# Demo Project\n\n"
         "Local-first review instrument for agent-prepared work.\n\n"
         "## Install\n\n"
         "```sh\npip install -e .\nkettle doctor\n```\n\n"
@@ -166,13 +171,13 @@ _DEMO_FILES: dict[str, str] = {
 def proposal_entry() -> dict:
     return {
         "id": "desk-proposal",
-        "title": "Desk Proposal",
+        "title": "Proposal",
         "path": PROPOSAL_PATH,
-        "brief": "Edit until the proposal matches your intent, then Found Desk.",
-        "ask": "Approve when ready — that founds the desk and stocks the first queue",
+        "brief": "Edit the proposal until it matches what you want, then approve it.",
+        "ask": "Approve when ready — that sets up your project and lines up the first files",
         "urgency": "high",
         "status": "pending",
-        "ask_type": "founding",
+        "ask_type": "judgment",
         "founding_phase": "proposal",
         "diff": None,
     }
@@ -184,7 +189,7 @@ def first_content_batch() -> list[dict]:
             "id": "readme-overview",
             "title": "README — Identity And How To Run",
             "path": "README.md",
-            "brief": "Front door for the new desk — tighten install and identity.",
+            "brief": "Front door for the new project — tighten install and identity.",
             "ask": "Edit until install and status match reality",
             "urgency": "high",
             "status": "pending",
@@ -195,8 +200,8 @@ def first_content_batch() -> list[dict]:
             "id": "architecture-map",
             "title": "Architecture Map",
             "path": "docs/ARCHITECTURE.md",
-            "brief": "Confirm desk-is-files and viewport list.",
-            "ask": "Confirm the desk boundary wording",
+            "brief": "Confirm the files-first rule and the viewport list.",
+            "ask": "Confirm the boundary wording",
             "urgency": "medium",
             "status": "pending",
             "ask_type": "review",

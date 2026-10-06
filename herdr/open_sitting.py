@@ -25,7 +25,7 @@ KEY_BLOCK = [
     'key = "prefix+k"',
     'type = "plugin_action"',
     'command = "kettle-tui.open"',
-    'description = "kettle: sitting for this directory"',
+    'description = "kettle: project for this directory"',
     BLOCK_END,
 ]
 CTX_KEYS = (

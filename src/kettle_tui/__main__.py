@@ -15,7 +15,7 @@ from .client import ClientError, KettleClient, default_project_id
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="kettle-tui",
-        description="Textual TUI spike for the Kettle review desk",
+        description="Terminal viewport for Kettle",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument(
@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         const="",
         metavar="DIR",
         default=None,
-        help="bind the sitting to the desk for DIR (default: cwd). "
+        help="open the project registered for DIR (default: cwd). "
         "Does not fall back to another project.",
     )
     p.add_argument(
@@ -118,14 +118,14 @@ def _check(
             loc = str(Path(loc).expanduser().resolve())
         except (OSError, RuntimeError):
             pass
-        print(f"    no desk for {loc}", file=sys.stderr)
+        print(f"    no project for {loc}", file=sys.stderr)
         return 1
 
     if pid:
         try:
             q = client.queue(str(pid), mutate=False)
             n = len(q.get("entries") or [])
-            print(f"    queue[{pid}]={n} entries")
+            print(f"    queue[{pid}]={n} files")
         except ClientError as e:
             print(f"    queue error: {e}", file=sys.stderr)
             return 1

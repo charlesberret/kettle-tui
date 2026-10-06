@@ -21,9 +21,15 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import demo
+from .uicopy import UiCopy, in_process_payload
 
 DISCOVERY_PATH = Path.home() / ".cache" / "kettle" / "server.json"
 DEFAULT_URL = "http://127.0.0.1:4242"
+# A file the user has decided about: approved, sent back for rework, or set aside
+# with Not this. Handled files sink to the bottom and do not hold up a finish
+# (SITTING-FLOWS §2.3a). Same set as the reference sitting's isHandled().
+HANDLED_STATUSES = frozenset({"approved", "rework", "set-aside"})
+PROPOSAL_ID = "desk-proposal"
 TOKEN_HEADER = "X-Kettle-Token"
 # Dual-read: new desks use .kettle/; a leftover .setsweep/ desk is still live.
 SWEEP_HEALTH_PATHS = (
@@ -53,7 +59,7 @@ class ClientError(Exception):
         if self.code == "curator_unavailable" and "kettle doctor" not in msg.lower():
             msg = f"{msg} — run kettle doctor"
         elif self.code == "queue_corrupt":
-            msg = f"{msg} (this desk only; queue.json was not overwritten)"
+            msg = f"{msg} (this project only; queue.json was not overwritten)"
         elif self.code == "busy":
             msg = f"{msg} — wait for the current turn to finish"
         bits = [msg]
@@ -93,13 +99,15 @@ def normalize_sweep_state(health: dict[str, Any] | None) -> str:
     return state
 
 
-def sweep_health_status(health: dict[str, Any] | None) -> str | None:
-    """Short status-bar token when the last curator sweep did not finish."""
+def sweep_health_status(
+    health: dict[str, Any] | None, copy: UiCopy | None = None
+) -> str | None:
+    """Short status-bar token when the last finish (a sweep) did not complete."""
     state = normalize_sweep_state(health)
     if state == "running":
-        return "sweep running"
+        return (copy or UiCopy()).state("sweeping", "line")
     if state == "failed":
-        return "last sweep failed"
+        return "last batch did not finish"
     return None
 
 
@@ -110,7 +118,7 @@ def sweep_health_detail(health: dict[str, Any] | None) -> str | None:
         return None
     when = health.get("updated") or health.get("started") or "?"
     err = str(health.get("error") or state).strip()
-    return f"last sweep did not finish: {err} at {when}"
+    return f"the last batch did not finish: {err} at {when}"
 
 
 def is_missing_project_folder(err: ClientError) -> bool:
@@ -233,6 +241,24 @@ class KettleClient:
             }
         return self._get("/api/ping")
 
+    def ui_copy(self) -> UiCopy:
+        """The copy catalog (SITTING-FLOWS §7): live core, then in-process, then literals.
+
+        Never raises — the catalog is words, and a missing one must not keep the
+        TUI from opening. A core that predates ``/api/ui-copy`` answers 404.
+        """
+        if not self.demo_mode:
+            try:
+                pay = self._get("/api/ui-copy")
+            except ClientError:
+                pay = None
+            if isinstance(pay, dict) and isinstance(pay.get("keys"), dict) and pay["keys"]:
+                return UiCopy(pay, source="core")
+        local = in_process_payload()
+        if local:
+            return UiCopy(local, source="in-process")
+        return UiCopy()
+
     def projects(self) -> list[dict[str, Any]]:
         if self.demo_mode:
             return list(self._demo_projects)
@@ -254,8 +280,8 @@ class KettleClient:
         if not note:
             raise ClientError(
                 message=(
-                    "founding sentence required: in a sentence or two, what is this "
-                    "and what do you want from a second reader here?"
+                    "a sentence about the project is required: what is this, and "
+                    "how could a second reader help?"
                 ),
                 code="bad_request",
                 status=400,
@@ -501,6 +527,35 @@ class KettleClient:
             return out
         return self._post("/api/approve", {"project": project_id, "id": entry_id})
 
+    def set_aside(
+        self, project_id: str, entry_id: str, *, undo: bool = False
+    ) -> dict[str, Any]:
+        """POST /api/set-aside — Not this; ``undo`` brings the file back to pending.
+
+        Core refuses the proposal entry with 400. Returns ``{ok, status}``.
+        """
+        if self.demo_mode:
+            e = self._demo_entry(project_id, entry_id)
+            if is_proposal_entry(e):
+                raise ClientError(
+                    message="the proposal is approved or edited, not set aside",
+                    code="bad_request",
+                    status=400,
+                )
+            if undo:
+                e["status"] = "pending"
+                e.pop("set_aside", None)
+            else:
+                from datetime import date
+
+                e["status"] = "set-aside"
+                e["set_aside"] = date.today().isoformat()
+            return {"ok": True, "status": e["status"]}
+        body: dict[str, Any] = {"project": project_id, "id": entry_id}
+        if undo:
+            body["undo"] = True
+        return self._post("/api/set-aside", body)
+
     def comment(self, project_id: str, entry_id: str, text: str) -> dict[str, Any]:
         if self.demo_mode:
             e = self._demo_entry(project_id, entry_id)
@@ -529,7 +584,7 @@ class KettleClient:
             yield {
                 "t": "text",
                 "s": (
-                    "This is offline demo mode — no curator runs. "
+                    "This is offline demo mode — no agent runs. "
                     "Connect to a live kettle core for real chat.\n"
                 ),
             }
@@ -552,14 +607,13 @@ class KettleClient:
     ) -> Iterator[dict[str, Any]]:
         """Yield NDJSON objects from POST /api/sweep (or a demo stub)."""
         if self.demo_mode:
-            yield {"t": "text", "s": "— demo sweep started —\n"}
             if thrust.strip():
-                yield {"t": "text", "s": f"steer: {thrust.strip()}\n"}
+                yield {"t": "text", "s": f"your note: {thrust.strip()}\n"}
             yield {
                 "t": "text",
                 "s": (
-                    "Offline demo: no curator. Would apply rulings, assess diffs, "
-                    "log the sitting, and restock the queue.\n"
+                    "Offline demo: no agent. Would apply your decisions, review what "
+                    "changed, save a record, and line up the next files.\n"
                 ),
             }
             yield {"t": "done"}
@@ -585,24 +639,23 @@ class KettleClient:
             if phase in ("proposing", "founded"):
                 yield {
                     "t": "text",
-                    "s": "Desk Proposal is ready — edit it, then Found Desk.\n",
+                    "s": "The proposal is ready — edit it, then approve it.\n",
                 }
                 yield {"t": "done"}
                 return
             self._demo_phases[project_id] = "interviewing"
             msg = (message or "").strip()
             if not msg:
-                yield {"t": "text", "s": "— founding interview (demo) —\n"}
                 yield {
                     "t": "text",
                     "s": (
-                        f"I'll survey **{project_id}** from the files (tool-less).\n\n"
-                        "What should this desk protect? Answer here, then press "
-                        "**draft proposal** when ready.\n"
+                        f"I'll read through **{project_id}** first.\n\n"
+                        "What should this project protect? Answer here, then press "
+                        "**d** when you want the proposal.\n"
                     ),
                 }
             else:
-                yield {"t": "text", "s": f"[demo curator] Heard: {msg}\n"}
+                yield {"t": "text", "s": f"[demo agent] Heard: {msg}\n"}
                 yield {
                     "t": "text",
                     "s": "Noted. Anything else, or draft the proposal?\n",
@@ -625,12 +678,11 @@ class KettleClient:
             if not any(e.get("id") == "desk-proposal" for e in entries):
                 entries.append(demo.proposal_entry())
             self._demo_files[f"{project_id}:{demo.PROPOSAL_PATH}"] = demo.PROPOSAL_BODY
-            yield {"t": "text", "s": "— drafting desk proposal (demo) —\n"}
             yield {
                 "t": "text",
                 "s": (
                     f"Wrote `{demo.PROPOSAL_PATH}`. Edit it in the center pane. "
-                    "Chat to revise. When it matches your intent, **Found Desk**.\n"
+                    "Chat to revise. When it matches what you want, **Approve** it.\n"
                 ),
             }
             yield {"t": "done"}
@@ -649,13 +701,9 @@ class KettleClient:
             self._demo_phases[project_id] = "founded"
             # Drop proposal placeholder; stock content queue
             self._demo_queues[project_id] = demo.first_content_batch()
-            yield {"t": "text", "s": "— founding desk (demo) —\n"}
             yield {
                 "t": "text",
-                "s": (
-                    "Charter and first queue filed. The sitting is open — "
-                    "select an entry on the left.\n"
-                ),
+                "s": "Project notes written and the first files lined up.\n",
             }
             yield {"t": "done"}
             return
@@ -886,13 +934,36 @@ def default_project_id(
     return projects[0]["id"] if projects else None
 
 
+def entry_status(entry: dict[str, Any] | None) -> str:
+    return str((entry or {}).get("status") or "pending").lower()
+
+
+def is_handled(entry: dict[str, Any] | None) -> bool:
+    """Approved, rework or set aside — the user has decided about this file."""
+    return entry_status(entry) in HANDLED_STATUSES
+
+
+def is_set_aside(entry: dict[str, Any] | None) -> bool:
+    return entry_status(entry) == "set-aside"
+
+
+def is_proposal_entry(entry: dict[str, Any] | None) -> bool:
+    if not entry:
+        return False
+    return entry.get("id") == PROPOSAL_ID or entry.get("founding_phase") == "proposal"
+
+
+def all_handled(entries: list[dict[str, Any]]) -> bool:
+    """Queue completion: every file handled (and at least one file)."""
+    return bool(entries) and all(is_handled(e) for e in entries)
+
+
 def sort_queue(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Match web: unhandled first, then urgency high→low."""
     order = {"high": 0, "medium": 1, "low": 2}
 
     def key(e: dict[str, Any]) -> tuple:
-        st = (e.get("status") or "pending").lower()
-        handled = 1 if st in ("approved", "rework") else 0
+        handled = 1 if is_handled(e) else 0
         urg = order.get((e.get("urgency") or "").lower(), 9)
         return (handled, urg)
 
@@ -935,8 +1006,16 @@ def ritual_controls(
     approved: bool,
     streaming: bool = False,
     phase: str = "founded",
+    proposal: bool = False,
+    set_aside: bool = False,
 ) -> dict[str, Any]:
-    """Mirror kettle-vscode ritualParity.ritualControls."""
+    """Mirror kettle-vscode ritualParity.ritualControls.
+
+    Approve reads ``approveLabel`` in every phase ("Found Desk" is retired); only
+    its hint changes while a proposal is open. Not this is off during setup and on
+    the proposal entry, and reads Bring back on a file already set aside.
+    Returns catalog *keys*, not words — the view resolves them.
+    """
     interviewing = phase in ("none", "interviewing")
     proposing = phase == "proposing"
     can_file = has_entry and not interviewing and not streaming
@@ -949,26 +1028,35 @@ def ritual_controls(
             else (can_file and not approved)
         ),
         "can_comment": can_file and not proposing,
+        "can_not_this": can_file and not proposing and not proposal,
         "can_sweep": (
             has_project
             and not interviewing
             and not proposing
             and not streaming
         ),
-        "approve_label": "Found Desk" if proposing else "Approve",
+        "approve_label_key": "approveLabel",
+        "approve_hint_key": "approveHintFounding" if proposing else "approveHint",
+        "not_this_undo": set_aside,
+        "not_this_label_key": "notThisUndoLabel" if set_aside else "notThisLabel",
+        "not_this_hint_key": "notThisUndoHint" if set_aside else "notThisHint",
     }
 
 
-def founding_steps(phase: str) -> tuple[int, int, str]:
+def founding_steps(phase: str, copy: UiCopy | None = None) -> tuple[int, int, str]:
     """Return (step_index_1based, total_steps, title) for TUI step chrome.
 
-    Pattern mirrors tuillem/dialog wizards: numbered steps, one primary action.
+    Titles are catalog state lines (SITTING-FLOWS §7); before the interview has
+    started there is no state yet, so the strip uses the setup heading.
     """
+    c = copy or UiCopy()
     total = 3
-    if phase in ("none",):
-        return 1, total, "Begin interview"
+    if phase == "none":
+        return 1, total, c.text("foundingHeadTitle")
     if phase == "interviewing":
-        return 1, total, "Founding interview"
+        return 1, total, c.state("interviewing", "line")
     if phase == "proposing":
-        return 2, total, "Edit desk proposal"
-    return 3, total, "Sitting open"
+        return 2, total, c.state("proposing", "line")
+    if phase == "founding":
+        return 3, total, c.state("founding", "line")
+    return 3, total, c.state("founded", "line")

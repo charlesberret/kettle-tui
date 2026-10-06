@@ -33,12 +33,12 @@ def test_demo_sweep_health_defaults_empty_and_is_writable():
     assert c.sweep_health("demo-desk")["state"] == "failed"
 
 
-def test_add_project_requires_founding_sentence():
+def test_add_project_requires_a_sentence_about_it():
     c = _client()
     with pytest.raises(ClientError) as ei:
         c.add_project("X", "/tmp/x", "")
     assert ei.value.status == 400
-    assert "founding sentence" in ei.value.message
+    assert "sentence about the project" in ei.value.message
 
 
 def test_refound_resets_demo_desk_to_unfounded():
