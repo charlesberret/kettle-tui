@@ -22,6 +22,7 @@ from typing import Any
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.content import Content
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -341,9 +342,14 @@ class EditorPane(Vertical):
         return self.query_one("#editor", TextArea).text
 
 
-def keycap(key: str, label: str) -> str:
-    """``a·approve`` — the key, then the catalog word in the TUI's lowercase key style."""
-    return f"{key}·{label.lower()}"
+def keycap(key: str, label: str) -> Content:
+    """``a·approve`` — the key in bold, then the catalog word in the TUI's lowercase key style.
+
+    The bold key is the strip's only accent: the strip itself stays one quiet tone so the
+    shortcuts, not the clickable keycaps, carry the eye (LAB-59). Content, not markup, so a
+    catalog word with brackets renders as written.
+    """
+    return Content.assemble((key, "bold"), f"·{label.lower()}")
 
 
 class DeskPane(Vertical):
@@ -1078,14 +1084,12 @@ class KettleTui(App[None]):
         background: #45475a;
         border: none;
     }
-    #btn-approve { color: #74c7ec; }
-    #btn-comment { color: #f9e2af; }
+    /* One quiet tone for the whole strip; the bold key letter is the only accent, so
+       the keycaps sit below the footer shortcuts (LAB-59). */
+    .action-strip Button { color: #a6adc8; }
     /* Not this is a correction, not the action a batch is built around:
        the quietest of the four (SITTING-FLOWS §2.3a). */
     #btn-not-this { color: #7f849c; text-style: italic; }
-    #btn-sweep { color: #a6e3a1; }
-    #btn-interview { color: #cba6f7; }
-    #btn-propose { color: #cba6f7; }
 
     #stream {
         height: 1fr;

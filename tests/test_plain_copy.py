@@ -399,7 +399,9 @@ IDENTIFIERS = ("demo-desk", "new-desk", "kettle-tui", "DESK-PROPOSAL")
 
 def _screen_text(app: KettleTui) -> str:
     svg = app.export_screenshot()
-    text = re.sub(r"<[^>]+>", " ", svg)
+    # Join runs with nothing: Textual draws real spaces as characters, and a styled key
+    # letter (bold "a" in "a·approve") is its own run.
+    text = re.sub(r"<[^>]+>", "", svg)
     text = html.unescape(text).replace("\xa0", " ")
     # Drop the SVG's stylesheet/definitions noise: keep only visible-ish runs.
     for ident in IDENTIFIERS:
