@@ -84,20 +84,24 @@ def test_short_falls_back_to_text():
     assert c.text("notThisLabel", short=True) == "Not this"  # no short in the catalog
 
 
+# A kettle-core checkout beside this one, as on the house machines.
+_SIBLING_CATALOG = Path(__file__).resolve().parents[2] / "kettle-core/kettle/static/ui-copy.json"
+
+
 def _core_catalog() -> dict | None:
-    """Core's catalog, when a checkout or install is available (skip otherwise)."""
+    """Core's catalog: $KETTLE_UI_COPY, else a sibling checkout, else an install (skip otherwise)."""
     env = os.environ.get("KETTLE_UI_COPY")
-    if env and Path(env).is_file():
-        return json.loads(Path(env).read_text(encoding="utf-8"))
-    pay = uicopy_mod.in_process_payload()
-    return pay
+    for path in (Path(env) if env else None, _SIBLING_CATALOG):
+        if path and path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return uicopy_mod.in_process_payload()
 
 
 def test_fallback_literals_equal_core_catalog():
     """Set KETTLE_UI_COPY=<kettle-core>/kettle/static/ui-copy.json to run in CI."""
     cat = _core_catalog()
     if not cat:
-        pytest.skip("no kettle-core catalog available (set KETTLE_UI_COPY)")
+        pytest.skip("no kettle-core catalog (set KETTLE_UI_COPY or check out ../kettle-core)")
     keys = cat.get("keys") or {}
     for key, rec in FALLBACK_KEYS.items():
         assert key in keys, f"core catalog has no {key}"
