@@ -86,5 +86,6 @@ Details: [`.local/spike-notes.md`](.local/spike-notes.md)
 .venv/bin/pip install -e '.[dev]' && .venv/bin/python -m pytest -q
 ```
 
-`tests/test_plain_copy.py` checks the built-in words against core's catalog when
-`KETTLE_UI_COPY=<kettle-core>/kettle/static/ui-copy.json` is set (skipped otherwise).
+`tests/test_plain_copy.py` checks the built-in words against core's catalog: from
+`KETTLE_UI_COPY=<path>/ui-copy.json` if set, else a `../kettle-core` checkout beside
+this one, else an installed `kettle` (skipped if none).
