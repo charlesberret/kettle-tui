@@ -12,3 +12,18 @@ build/
 # Agent working files (kept on disk, never published)
 .coordination/
 .inbox/
+.claude/
+.cursor/
+.grok/
+.aider*
+.env
+.env.*
+!.env.example
+.mypy_cache/
+venv/
+node_modules/
+.idea/
+*.swp
+*~
+Thumbs.db
+*.code-workspace
