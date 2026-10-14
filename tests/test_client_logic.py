@@ -53,7 +53,7 @@ def test_default_project_env_must_exist(monkeypatch):
 
 def test_default_project_name_from_folder():
     assert default_project_name("/tmp/my-notes") == "My Notes"
-    assert default_project_name("~/cloud/git-projects/kettle-tui") == "Kettle Tui"
+    assert default_project_name("/tmp/kettle-tui") == "Kettle Tui"
 
 
 def test_default_project_none_when_empty(monkeypatch):
