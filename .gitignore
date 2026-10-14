@@ -12,3 +12,18 @@ build/
 # Agent working files (kept on disk, never published)
 .coordination/
 .inbox/
+
+# Local surface — not for a public tree
+.claude/
+.cursor/
+.grok/
+.aider*
+.env
+.env.*
+!.env.example
+.mypy_cache/
+venv/
+node_modules/
+.idea/
+*.swp
+Thumbs.db
