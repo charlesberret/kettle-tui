@@ -8,3 +8,7 @@ dist/
 build/
 *.pyc
 .DS_Store
+
+# Agent working files (kept on disk, never published)
+.coordination/
+.inbox/

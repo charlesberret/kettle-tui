@@ -6,7 +6,7 @@ Terminal viewport for Kettle, plugin-shaped (**Shape B**):
 Queue  ·  Editor  ·  Agent (summary → Approve · Comment · Not this · Finish batch → stream → composer)
 ```
 
-Product structure: [`kettle-core/docs/UI-STRUCTURE.md`](../kettle-core/docs/UI-STRUCTURE.md)  
+Product structure: [`kettle-core/docs/UI-STRUCTURE.md`](https://github.com/charlesberret/kettle-core/blob/main/docs/UI-STRUCTURE.md)  
 Research notes: [`.local/`](.local/)
 
 The words on screen come from kettle-core's copy catalog (`GET /api/ui-copy`), so a
@@ -20,7 +20,7 @@ Core server should be up (or use demo mode). With both this package and
 `kettle-core` installed, bare `kettle` execs the TUI; `kettle-web` is the HTTP host.
 
 ```sh
-cd ~/cloud/git-projects/kettle-tui
+git clone https://github.com/charlesberret/kettle-tui && cd kettle-tui
 python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/kettle-tui --here             # the project for this directory
 .venv/bin/kettle-tui --project armada   # live, named project
@@ -35,7 +35,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 Kettle belongs in a **tab** on the directory you are already working in — not a cowbell harness (those raise agents).
 
 ```sh
-herdr plugin link ~/cloud/git-projects/kettle-tui
+herdr plugin link "$PWD"
 herdr plugin action invoke kettle-tui.install-keys   # prefix+k
 herdr server reload-config
 ```
