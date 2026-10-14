@@ -8,8 +8,6 @@ Queue  ·  Editor  ·  Agent (summary → Approve · Comment · Not this · Fini
 
 Product structure is in [`kettle-core/docs/UI-STRUCTURE.md`](https://github.com/charlesberret/kettle-core/blob/main/docs/UI-STRUCTURE.md).
 
-Research notes are in [`.local/`](.local/).
-
 The words on screen come from kettle-core's copy catalog, `GET /api/ui-copy`. A label changed there, or relabelled in the web app's UI debug mode, shows up here too. With no core, or one too old to serve the catalog, the TUI uses the same words built in.
 
 ## Run
@@ -70,8 +68,6 @@ The composer is the setup interview until the project is set up. After that it i
 .venv/bin/kettle-tui --demo --project demo-desk
 .venv/bin/kettle-tui --project armada            # live; may start core
 ```
-
-Details are in [`.local/spike-notes.md`](.local/spike-notes.md).
 
 ## Tests
 
