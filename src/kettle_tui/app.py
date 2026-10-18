@@ -1877,6 +1877,10 @@ class KettleTui(App[None]):
         self.push_screen(HelpScreen())
 
     def action_pick_project(self) -> None:
+        if self.state.streaming:
+            self.notify(BUSY, severity="warning")
+            return
+
         def done(pid: str | None) -> None:
             if not pid:
                 return

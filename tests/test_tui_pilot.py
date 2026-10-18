@@ -13,7 +13,7 @@ import asyncio
 
 from textual.widgets import Input, TextArea
 
-from kettle_tui.app import ConfirmActionModal, KettleTui, RegisterDeskModal
+from kettle_tui.app import ConfirmActionModal, KettleTui, ProjectPicker, RegisterDeskModal
 from kettle_tui.client import KettleClient, sweep_health_status
 
 
@@ -305,5 +305,22 @@ def test_approve_founding_true_opens_found_confirm():
                 lambda: app.state.phase == "founded" and not app.state.streaming,
             )
             assert app.state.selected_id not in (None, "desk-proposal")
+
+    asyncio.run(run())
+
+
+def test_pick_project_refused_while_streaming():
+    """The project picker refuses to open while a stream is live."""
+
+    async def run():
+        app = _app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+
+            app.state.streaming = True
+            app.action_pick_project()
+            await pilot.pause()
+            assert not isinstance(app.screen, ProjectPicker)
+            assert app.state.project_id == "demo-desk"
 
     asyncio.run(run())
