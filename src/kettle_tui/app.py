@@ -1884,6 +1884,9 @@ class KettleTui(App[None]):
         def done(pid: str | None) -> None:
             if not pid:
                 return
+            if self.state.streaming:
+                self.notify(BUSY, severity="warning")
+                return
             if pid == "__register__":
                 self.action_register_desk()
                 return
