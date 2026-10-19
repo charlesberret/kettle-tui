@@ -13,7 +13,12 @@ import asyncio
 
 from textual.widgets import Input, TextArea
 
-from kettle_tui.app import ConfirmActionModal, KettleTui, RegisterDeskModal
+from kettle_tui.app import (
+    ConfirmActionModal,
+    KettleTui,
+    ProjectPicker,
+    RegisterDeskModal,
+)
 from kettle_tui.client import KettleClient, sweep_health_status
 
 
@@ -305,5 +310,42 @@ def test_approve_founding_true_opens_found_confirm():
                 lambda: app.state.phase == "founded" and not app.state.streaming,
             )
             assert app.state.selected_id not in (None, "desk-proposal")
+
+    asyncio.run(run())
+
+def test_boot_resumes_last_project():
+    """With no flag/env/cwd match, the boot desk is settings.lastProject."""
+
+    async def run():
+        client = KettleClient(demo_mode=True)
+        client._demo_settings["lastProject"] = "notes"
+        app = KettleTui(client)
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            assert app.state.project_id == "notes"
+            assert not isinstance(app.screen, ProjectPicker)
+
+    asyncio.run(run())
+
+
+def test_boot_without_desk_opens_picker():
+    """Nothing identifies a desk → the picker asks instead of guessing."""
+
+    async def run():
+        client = KettleClient(demo_mode=True)
+        app = KettleTui(client)
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: isinstance(app.screen, ProjectPicker))
+            assert app.state.project_id is None
+            await pilot.pause()
+            app.screen.query_one("#project-list").focus()
+            await pilot.press("enter")  # first option = demo-desk
+            assert await _settle(
+                pilot,
+                lambda: app.state.project_id == "demo-desk"
+                and not isinstance(app.screen, ProjectPicker),
+            )
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            assert client._demo_settings.get("lastProject") == "demo-desk"
 
     asyncio.run(run())

@@ -55,8 +55,8 @@ def test_require_here_does_not_fall_back(tmp_path: Path, monkeypatch):
     assert (
         default_project_id(projects, here=tmp_path, require_here=True) is None
     )
-    # without --here, unknown cwd still falls back to first
-    assert default_project_id(projects, here=tmp_path) == "mono"
+    # without --here, an unmatched cwd resolves nothing (the caller decides)
+    assert default_project_id(projects, here=tmp_path) is None
 
 
 def test_preferred_beats_here(tmp_path: Path):
