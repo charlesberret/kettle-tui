@@ -61,7 +61,7 @@ herdr server reload-config
 
 **Not this** is one key, with no questions. The file is set aside, sinks to the bottom of the queue with the files you have already decided about, and the agent says what it took from it in the next round notes. It is off while a project is being set up and on the proposal itself. Approve reads the same while a proposal is open. Approving the proposal is what sets the project up.
 
-The composer is the setup interview until the project is set up. After that it is chat. Drag `│` to resize columns.
+The composer is the setup interview until the project is set up. After that it is chat. `Enter` sends; `Ctrl+J` (or `Shift+Enter` where the terminal reports it) inserts a newline. Drag `│` to resize columns.
 
 ```sh
 .venv/bin/kettle-tui --demo --project new-desk   # a project not set up yet
