@@ -1,24 +1,26 @@
 # kettle-tui
 
-Terminal viewport for Kettle, plugin-shaped, **Shape B**:
+A terminal viewport for [Kettle](https://github.com/charlesberret/kettle), the local-first review desk for work done by coding and writing agents. It shows the same queue as the web, VS Code and desktop viewports, in a terminal, and can open as a [herdr](https://github.com/herdrdev/herdr) tab.
 
 ```text
 Queue  ·  Editor  ·  Agent (summary → Approve · Comment · Not this · Finish batch → stream → composer)
 ```
 
-Product structure is in [`kettle-core/docs/UI-STRUCTURE.md`](https://github.com/charlesberret/kettle-core/blob/main/docs/UI-STRUCTURE.md).
+## Status
+
+**Experimental.** This is version 0.0.1 and began as a spike. It works against Kettle core and is tested from source. It is planned to be folded into [`kettle-core`](https://github.com/charlesberret/kettle-core), after which this repository will be archived; until then a bare `kettle` command starts it when both packages are installed. Product structure is in [`kettle-core/docs/UI-STRUCTURE.md`](https://github.com/charlesberret/kettle-core/blob/main/docs/UI-STRUCTURE.md).
 
 The words on screen come from kettle-core's copy catalog, `GET /api/ui-copy`. A label changed there, or relabelled in the web app's UI debug mode, shows up here too. With no core, or one too old to serve the catalog, the TUI uses the same words built in.
 
 ## Run
 
-Core server should be up, or use demo mode. With both this package and `kettle-core` installed, bare `kettle` execs the TUI; `kettle-web` is the HTTP host.
+Needs Python 3.11 or newer. Install [kettle-core](https://github.com/charlesberret/kettle-core#try-it) first and start its server, or use demo mode, which needs no core. With both this package and `kettle-core` installed, bare `kettle` starts the TUI; `kettle-web` is the HTTP host.
 
 ```sh
 git clone https://github.com/charlesberret/kettle-tui && cd kettle-tui
 python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/kettle-tui --here             # the project for this directory
-.venv/bin/kettle-tui --project armada   # live, named project
+.venv/bin/kettle-tui --project my-project   # live, named project
 .venv/bin/kettle-tui --demo             # offline
 .venv/bin/kettle-tui --check --here     # no TUI; exit 1 if this directory has no project
 ```
@@ -27,7 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 
 ## Herdr
 
-Kettle belongs in a **tab** on the directory you are already working in, not a cowbell harness. Those raise agents.
+Kettle belongs in a **tab** on the directory you are already working in. It is a viewport onto your review desk, not a launcher for agents. Needs herdr 0.9.0 or newer. From the `kettle-tui` clone:
 
 ```sh
 herdr plugin link "$PWD"
@@ -66,7 +68,7 @@ The composer is the setup interview until the project is set up. After that it i
 ```sh
 .venv/bin/kettle-tui --demo --project new-desk   # a project not set up yet
 .venv/bin/kettle-tui --demo --project demo-desk
-.venv/bin/kettle-tui --project armada            # live; may start core
+.venv/bin/kettle-tui --project my-project        # live; may start core
 ```
 
 ## Tests
@@ -76,3 +78,7 @@ The composer is the setup interview until the project is set up. After that it i
 ```
 
 `tests/test_plain_copy.py` checks the built-in words against core's catalog when `KETTLE_UI_COPY=<kettle-core>/kettle/static/ui-copy.json` is set. The test is skipped otherwise.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
