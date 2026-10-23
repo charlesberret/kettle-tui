@@ -198,6 +198,7 @@ class KettleClient:
         self._demo_files: dict[str, str] = {}
         self._demo_phases: dict[str, str] = dict(demo.DEMO_PHASES) if demo_mode else {}
         self._demo_sweep_health: dict[str, dict[str, Any]] = {}
+        self._demo_settings: dict[str, Any] = {}
         self._demo_projects: list[dict[str, Any]] = (
             [dict(p) for p in demo.DEMO_PROJECTS] if demo_mode else []
         )
@@ -264,6 +265,20 @@ class KettleClient:
             return list(self._demo_projects)
         data = self._get("/api/projects")
         return list(data.get("projects") or [])
+
+    def settings(self) -> dict[str, Any]:
+        """GET /api/settings — whole settings dict (curator block, lastProject, …)."""
+        if self.demo_mode:
+            return dict(self._demo_settings)
+        return self._get("/api/settings")
+
+    def save_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/settings — deep-merge patch server-side, same route the
+        web sitting uses (e.g. ``{lastProject: pid}``)."""
+        if self.demo_mode:
+            self._demo_settings.update(patch)
+            return dict(self._demo_settings)
+        return self._post("/api/settings", patch)
 
     def add_project(
         self,
@@ -909,13 +924,17 @@ def default_project_id(
     *,
     here: str | Path | None = None,
     require_here: bool = False,
+    last: str | None = None,
 ) -> str | None:
     """Pick a desk id.
 
     Order: ``--project`` / preferred id, then ``KETTLE_PROJECT``, then the
-    registered root that contains ``here`` (cwd when omitted). With
-    ``require_here`` (``kettle-tui --here``) a miss stays unbound — do not
-    silently open some other project's sitting.
+    registered root that contains ``here`` (cwd when omitted), then
+    ``lastProject`` from settings when it still names a registered desk —
+    the web sitting's resume contract. With ``require_here``
+    (``kettle-tui --here``) a miss stays unbound — do not silently open
+    some other project's sitting. No hit returns ``None``; landing on an
+    arbitrary ``projects[0]`` is the caller's decision, not this one's.
     """
     if preferred:
         for p in projects:
@@ -931,7 +950,11 @@ def default_project_id(
         return matched
     if require_here:
         return None
-    return projects[0]["id"] if projects else None
+    if last:
+        for p in projects:
+            if p.get("id") == last:
+                return str(p["id"])
+    return None
 
 
 def entry_status(entry: dict[str, Any] | None) -> str:

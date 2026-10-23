@@ -673,15 +673,20 @@ class ProjectPicker(ModalScreen[str | None]):
 
     def on_mount(self) -> None:
         ol = self.query_one("#project-list", OptionList)
-        for p in self._projects:
+        current_idx: int | None = None
+        for i, p in enumerate(self._projects):
             pid = str(p.get("id") or "")
             name = str(p.get("name") or pid)
+            if pid == self._current:
+                current_idx = i
             mark = " ←" if pid == self._current else ""
             kit = p.get("kit") or ""
             label = f"{name}  [dim]{pid}" + (f" · {kit}" if kit else "") + f"{mark}[/]"
             ol.add_option(Option(label, id=pid))
         add = _copy_of(self).text("addProjectTitle", short=True).lower()
         ol.add_option(Option(f"[dim]+ {add}…[/]", id="__register__"))
+        # Seed a highlight so Enter alone selects (boot picker has no current).
+        ol.highlighted = current_idx if current_idx is not None else 0
         ol.focus()
 
     @on(OptionList.OptionSelected, "#project-list")
@@ -1356,11 +1361,16 @@ class KettleTui(App[None]):
             copy = self.client.ui_copy()
             ping = self.client.ping()
             projects = self.client.projects()
+            try:
+                settings = self.client.settings()
+            except ClientError:
+                settings = {}
             pid = default_project_id(
                 projects,
                 self._preferred_project,
                 here=self._here,
                 require_here=self._require_here,
+                last=settings.get("lastProject"),
             )
             entries: list[dict[str, Any]] = []
             iv: dict[str, Any] | None = None
@@ -1419,13 +1429,15 @@ class KettleTui(App[None]):
                 self.load_entry(str(self.state.selected_id))
             else:
                 self._paint_empty_entry()
-            if (
-                self._require_here
-                and not self.state.project_id
-                and not self._offered_register
-            ):
-                self._offered_register = True
-                self.set_timer(0.1, self.action_register_desk)
+            if not self.state.project_id:
+                if self._require_here:
+                    if not self._offered_register:
+                        self._offered_register = True
+                        self.set_timer(0.1, self.action_register_desk)
+                else:
+                    # No flag, env, cwd match or lastProject named a desk —
+                    # ask which desk instead of landing on an arbitrary one.
+                    self.set_timer(0.1, self.action_pick_project)
 
         self.call_from_thread(apply)
 
@@ -1876,6 +1888,13 @@ class KettleTui(App[None]):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
+    def _remember_project(self, pid: str) -> None:
+        # The desk you last sat in — shared settings key with the web sitting.
+        try:
+            self.client.save_settings({"lastProject": pid})
+        except ClientError:
+            pass
+
     def action_pick_project(self) -> None:
         def done(pid: str | None) -> None:
             if not pid:
@@ -1887,6 +1906,7 @@ class KettleTui(App[None]):
                 return
             self._preferred_project = pid
             self.state.project_id = pid
+            self._remember_project(pid)
             self.notify(f"project → {pid}", timeout=2)
             self.load_queue_only()
 
@@ -2008,6 +2028,7 @@ class KettleTui(App[None]):
                 pass
             self._preferred_project = pid
             self.state.project_id = pid
+            self._remember_project(pid)
             self.notify(f"added {draft.name}", timeout=2)
             desk = self.query_one(DeskPane)
             desk.stream_write(f"added {draft.name} ({pid})", style="#a6e3a1")

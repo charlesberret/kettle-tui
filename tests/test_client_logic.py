@@ -37,8 +37,8 @@ def test_default_project_prefers_explicit_preferred():
 
 
 def test_default_project_ignores_preferred_not_present():
-    # Falls through to first when the preferred id is unknown.
-    assert default_project_id(PROJECTS, "nope") == "alpha"
+    # An unknown preferred id resolves nothing; the caller decides the fallback.
+    assert default_project_id(PROJECTS, "nope") is None
 
 
 def test_default_project_uses_env(monkeypatch):
@@ -48,17 +48,33 @@ def test_default_project_uses_env(monkeypatch):
 
 def test_default_project_env_must_exist(monkeypatch):
     monkeypatch.setenv("KETTLE_PROJECT", "missing")
-    assert default_project_id(PROJECTS) == "alpha"
+    assert default_project_id(PROJECTS) is None
 
 
 def test_default_project_name_from_folder():
     assert default_project_name("/tmp/my-notes") == "My Notes"
-    assert default_project_name("~/cloud/git-projects/kettle-tui") == "Kettle Tui"
+    assert default_project_name("~/work/kettle-tui") == "Kettle Tui"
 
 
 def test_default_project_none_when_empty(monkeypatch):
     monkeypatch.delenv("KETTLE_PROJECT", raising=False)
     assert default_project_id([]) is None
+
+
+def test_default_project_resumes_last(monkeypatch):
+    monkeypatch.delenv("KETTLE_PROJECT", raising=False)
+    assert default_project_id(PROJECTS, last="beta") == "beta"
+
+
+def test_default_project_last_must_be_registered(monkeypatch):
+    monkeypatch.delenv("KETTLE_PROJECT", raising=False)
+    assert default_project_id(PROJECTS, last="ghost") is None
+
+
+def test_default_project_last_loses_to_env_and_preferred(monkeypatch):
+    monkeypatch.setenv("KETTLE_PROJECT", "gamma")
+    assert default_project_id(PROJECTS, last="alpha") == "gamma"
+    assert default_project_id(PROJECTS, "beta", last="gamma") == "beta"
 
 
 # ── sort_queue ──────────────────────────────────────────────────────────

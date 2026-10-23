@@ -98,8 +98,16 @@ def _check(
         print(f"error: {e}", file=sys.stderr)
         return 1
 
+    try:
+        settings = client.settings()
+    except ClientError:
+        settings = {}
     pid = default_project_id(
-        projects, project, here=here, require_here=require_here
+        projects,
+        project,
+        here=here,
+        require_here=require_here,
+        last=settings.get("lastProject"),
     )
     here_display = here or (os.getcwd() if require_here else None)
 
