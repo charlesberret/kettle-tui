@@ -94,7 +94,8 @@ def _file_name(entry: dict[str, Any] | None) -> str:
 
 
 def _second_line(entry: dict[str, Any]) -> str:
-    """Web-like line 2: optional ask_type + title/ask snippet (not path)."""
+    """Web-like line 2: title/ask snippet (not path). ask_type lives in the
+    agent summary, not on the row."""
     title = (entry.get("title") or "").strip()
     ask = (entry.get("ask") or "").strip()
     # Prefer title after em-dash (web does this for path-bearing rows)
@@ -105,20 +106,18 @@ def _second_line(entry: dict[str, Any]) -> str:
             break
     if not summary:
         summary = ask
-    tag = entry.get("ask_type") or ""
-    if tag:
-        return f"{tag}  {summary}" if summary else str(tag)
     return summary
 
 
 def _diff_label(diff: Any) -> str:
+    """Diffstat markup in diff colors: +N green, −N red."""
     if not isinstance(diff, dict):
         return ""
     parts = []
     if diff.get("added"):
-        parts.append(f"+{diff['added']}")
+        parts.append(f"[#98c379]+{diff['added']}[/]")
     if diff.get("removed"):
-        parts.append(f"-{diff['removed']}")
+        parts.append(f"[#e06c75]-{diff['removed']}[/]")
     return " ".join(parts)
 
 
@@ -137,9 +136,12 @@ def _brief_md(entry: dict[str, Any] | None, empty: str = "") -> str:
         return empty
     ask = (entry.get("ask") or "").strip()
     brief = (entry.get("brief") or "").strip() or "_No summary._"
+    tag = str(entry.get("ask_type") or "").strip().capitalize()
     parts = []
     if ask:
-        parts.append(f"> {ask}\n")
+        parts.append(f"> {tag + ': ' if tag else ''}{ask}\n")
+    elif tag:
+        parts.append(f"> {tag}\n")
     parts.append(brief)
     return "\n".join(parts)
 
@@ -270,14 +272,27 @@ class QueueItem(ListItem):
         urg = e.get("urgency")
         note = " [#f9e2af]·[/]" if e.get("comment") else ""
         diff = _diff_label(e.get("diff"))
-        # Color square (urgency) · file name · optional note · diffstat
-        yield Label(
+        # One line each: truncate to the queue's real width so the name never
+        # wraps under its urgency square.
+        try:
+            row_w = int(getattr(self.app, "queue_width", 0)) - 4
+        except Exception:
+            row_w = 0
+        line1 = Content.from_markup(
             f"[{_urgency_style(urg)}]■[/] [{style}]{fname}[/]{note}"
-            + (f"  [dim]{diff}[/]" if diff else "")
+            + (f"  {diff}" if diff else "")
         )
+        if row_w > 8:
+            line1 = line1.truncate(row_w, ellipsis=True)
+        yield Label(line1)
         line2 = _second_line(e)
         if line2:
-            yield Label(f"[dim italic]{line2}[/]" if is_set_aside(e) else f"[dim]{line2}[/]")
+            c2 = Content.from_markup(
+                f"[dim italic]{line2}[/]" if is_set_aside(e) else f"[dim]{line2}[/]"
+            )
+            if row_w > 8:
+                c2 = c2.truncate(row_w, ellipsis=True)
+            yield Label(c2)
 
 
 class QueuePane(Vertical):
@@ -1010,7 +1025,7 @@ class KettleTui(App[None]):
         width: 100%;
         overflow: hidden;
     }
-    #queue-list > ListItem.--highlight { background: #313244; }
+    #queue-list > ListItem.-highlight { background: #313244; }
     #queue-list Label {
         width: 100%;
         overflow: hidden;
