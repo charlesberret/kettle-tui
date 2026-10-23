@@ -24,6 +24,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.content import Content
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -352,6 +353,46 @@ def keycap(key: str, label: str) -> Content:
     return Content.assemble((key, "bold"), f"·{label.lower()}")
 
 
+class ComposerArea(TextArea):
+    """Interview/chat composer: wraps as a block, Enter sends, Ctrl+J (or
+    Shift+Enter where the terminal reports it) inserts a newline. Mirrors the
+    web composer's contract; Shift+Enter is unreliable over ssh/tmux."""
+
+    class Submitted(Message):
+        """Same surface as Input.Submitted for the app's handler."""
+
+        def __init__(self, composer: "ComposerArea") -> None:
+            super().__init__()
+            self.composer = composer
+            self.value = composer.text
+
+        @property
+        def control(self) -> "ComposerArea":
+            return self.composer
+
+    BINDINGS = [
+        Binding("ctrl+j", "newline", "New line", show=False),
+        Binding("shift+enter", "newline", "New line", show=False),
+    ]
+
+    MAX_ROWS = 10
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self))
+            return
+        await super()._on_key(event)
+
+    def action_newline(self) -> None:
+        self.insert("\n")
+
+    def on_text_area_changed(self, _event: TextArea.Changed) -> None:
+        # Grow with content (wrapped lines count), capped like the web composer.
+        self.styles.height = max(1, min(self.MAX_ROWS, self.wrapped_document.height))
+
+
 class DeskPane(Vertical):
     """Right (the agent pane): step banner → summary → ritual / setup actions → stream
     → composer. The class keeps its old name; it is an identifier, not copy."""
@@ -391,10 +432,16 @@ class DeskPane(Vertical):
             id="stream",
             wrap=True,
             markup=True,
+            min_width=0,
             max_lines=800,
             auto_scroll=True,
         )
-        yield Input(placeholder="", id="composer")
+        yield ComposerArea(
+            id="composer",
+            soft_wrap=True,
+            highlight_cursor_line=False,
+            show_line_numbers=False,
+        )
 
     def show_brief(self, entry: dict[str, Any] | None, empty: str = "") -> None:
         self.query_one("#brief-md", Markdown).update(_brief_md(entry, empty))
@@ -406,7 +453,7 @@ class DeskPane(Vertical):
         banner = self.query_one("#founding-step", Static)
         actions = self.query_one("#founding-actions")
         ritual = self.query_one("#ritual")
-        composer = self.query_one("#composer", Input)
+        composer = self.query_one("#composer", ComposerArea)
         # Placeholders stay empty — no permanent how-to text on the sitting.
         composer.placeholder = ""
 
@@ -1104,6 +1151,7 @@ class KettleTui(App[None]):
     #composer {
         margin: 1 0;
         width: 100%;
+        height: 1;
         background: #313244;
         border: none;
         overflow: hidden;
@@ -1854,12 +1902,12 @@ class KettleTui(App[None]):
     def on_propose_btn(self) -> None:
         self.action_draft_proposal()
 
-    @on(Input.Submitted, "#composer")
-    def on_composer_submit(self, event: Input.Submitted) -> None:
+    @on(ComposerArea.Submitted, "#composer")
+    def on_composer_submit(self, event: ComposerArea.Submitted) -> None:
         msg = event.value.strip()
         if not msg:
             return
-        event.input.value = ""
+        event.composer.text = ""
         # Founding interview turns go to /api/interview; else project chat
         if self.state.phase in ("none", "interviewing"):
             self.send_interview(msg)
@@ -2866,7 +2914,7 @@ class KettleTui(App[None]):
             "refound-desk": self.action_refound_desk,
             "focus-queue": lambda: self.query_one("#queue-list", ListView).focus(),
             "focus-editor": lambda: self.query_one("#editor", TextArea).focus(),
-            "focus-composer": lambda: self.query_one("#composer", Input).focus(),
+            "focus-composer": lambda: self.query_one("#composer", ComposerArea).focus(),
             "help": self.action_help,
             "quit": self.action_quit,
         }

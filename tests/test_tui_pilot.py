@@ -11,9 +11,15 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import Input, TextArea
+from textual.widgets import Input, RichLog, TextArea
 
-from kettle_tui.app import ConfirmActionModal, KettleTui, RegisterDeskModal
+from kettle_tui.app import (
+    ComposerArea,
+    ConfirmActionModal,
+    DeskPane,
+    KettleTui,
+    RegisterDeskModal,
+)
 from kettle_tui.client import KettleClient, sweep_health_status
 
 
@@ -305,5 +311,52 @@ def test_approve_founding_true_opens_found_confirm():
                 lambda: app.state.phase == "founded" and not app.state.streaming,
             )
             assert app.state.selected_id not in (None, "desk-proposal")
+
+    asyncio.run(run())
+
+
+def test_stream_wraps_long_lines():
+    """Agent output wraps at the pane's real width, not RichLog's 78 default."""
+
+    async def run():
+        app = _app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            pane = app.query_one(DeskPane)
+            log = pane.query_one("#stream", RichLog)
+            pane.stream_write("alpha " + "x" * 300 + " omega")
+            await pilot.pause()
+            width = log.scrollable_content_region.width
+            assert width > 0
+            clipped = [s.cell_length for s in log.lines if s.cell_length > width]
+            assert not clipped, f"stream lines exceed pane width {width}: {clipped}"
+
+    asyncio.run(run())
+
+
+def test_composer_grows_and_enter_sends():
+    """The composer wraps into a block; Enter sends, Ctrl+J newline."""
+
+    async def run():
+        app = _app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert await _settle(pilot, lambda: bool(app.state.entries))
+            composer = app.query_one("#composer", ComposerArea)
+            composer.focus()
+            await pilot.pause()
+
+            composer.load_text("hello " + "word " * 40)
+            await pilot.pause()
+            assert composer.wrapped_document.height > 1
+            assert composer.styles.height.value > 1
+
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+            assert "\n" in composer.text
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert composer.text == ""
+            assert composer.styles.height.value == 1
 
     asyncio.run(run())
