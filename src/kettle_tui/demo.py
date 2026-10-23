@@ -143,7 +143,7 @@ _DEMO_FILES: dict[str, str] = {
         "## Install\n\n"
         "```sh\npip install -e .\nkettle doctor\n```\n\n"
         "## Quick start\n\n"
-        "```sh\nkettle add ~/path/to/project\nkettle --web\n```\n"
+        "```sh\nkettle add ~/path/to/project\nkettle-web\n```\n"
     ),
     "docs/ARCHITECTURE.md": (
         "# Architecture\n\n"
