@@ -22,6 +22,7 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from textual.widgets import Button
@@ -113,7 +114,7 @@ def test_fallback_literals_equal_core_catalog():
 
 
 class _Core(BaseHTTPRequestHandler):
-    posts: list[tuple[str, dict]] = []
+    posts: ClassVar[list[tuple[str, dict]]] = []
     catalog: dict | None = None
 
     def _send(self, code: int, body: dict) -> None:
@@ -124,13 +125,13 @@ class _Core(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         if self.path.startswith("/api/ui-copy") and self.catalog is not None:
             self._send(200, self.catalog)
         else:
             self._send(404, {"error": "not found", "code": "not_found"})
 
-    def do_POST(self):  # noqa: N802
+    def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}")
         type(self).posts.append((self.path, body))
@@ -148,7 +149,7 @@ class _Core(BaseHTTPRequestHandler):
             return
         self._send(404, {"error": "not found", "code": "not_found"})
 
-    def log_message(self, format, *args):  # noqa: A002
+    def log_message(self, format, *args):
         return
 
 

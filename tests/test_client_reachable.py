@@ -16,6 +16,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -33,7 +34,7 @@ def _free_port() -> int:
 
 
 class _PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802 (http.server contract)
+    def do_GET(self):
         if self.path.startswith("/api/ping"):
             body = json.dumps(
                 {"app": "kettle", "version": "test", "api_version": 0}
@@ -47,7 +48,7 @@ class _PingHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, format, *args):  # noqa: A002 — silence test noise
+    def log_message(self, format, *args):
         return
 
 
@@ -124,9 +125,9 @@ class _AuthThenOkHandler(BaseHTTPRequestHandler):
 
     stale = "stale-token"
     fresh = "fresh-token"
-    hits: list[str] = []
+    hits: ClassVar[list[str]] = []
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         token = self.headers.get("X-Kettle-Token") or ""
         type(self).hits.append(token)
         if token != self.fresh:
@@ -140,7 +141,7 @@ class _AuthThenOkHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format, *args):  # noqa: A002
+    def log_message(self, format, *args):
         return
 
 

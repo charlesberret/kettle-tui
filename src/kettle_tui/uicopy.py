@@ -11,7 +11,7 @@ and state messages from that catalog instead of writing its own sentences:
 3. the literals below.
 
 The literals are a copy of the catalog entries this viewport uses, kept equal to
-core's text (``tests/test_uicopy.py`` checks them against a core checkout when one
+core's text (``tests/test_plain_copy.py`` checks them against a core checkout when one
 is available). They exist so an old core or a missing catalog degrades to the
 right words, never to a blank button. Add a key here only when the TUI renders it.
 """
@@ -172,12 +172,12 @@ def in_process_payload() -> dict[str, Any] | None:
     try:
         import kettle  # type: ignore[import-not-found]
         from kettle import uicopy  # type: ignore[import-not-found]
-    except Exception:
+    except ImportError:
         return None
     try:
         static = Path(kettle.__file__).resolve().parent / "static"
         pay = uicopy.payload(static)
-    except Exception:
+    except (AttributeError, OSError, TypeError, ValueError):
         return None
     if not isinstance(pay, dict) or not pay.get("keys"):
         return None

@@ -16,9 +16,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from . import demo
 from .uicopy import UiCopy, in_process_payload
@@ -172,7 +173,7 @@ def _token_from_file() -> str | None:
 def _port_from_url(url: str) -> int | None:
     try:
         return urllib.parse.urlparse(url).port
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return None
 
 
@@ -484,7 +485,7 @@ class KettleClient:
         if not kettle:
             return False
         try:
-            subprocess.Popen(  # noqa: S603 — intentional local core launch
+            subprocess.Popen(
                 [kettle, "--web", "--no-open"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -745,7 +746,7 @@ class KettleClient:
         err_body: dict[str, Any] = {}
         try:
             err_body = json.loads(e.read().decode("utf-8"))
-        except Exception:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pass
         return ClientError(
             message=str(err_body.get("error") or e.reason or "http error"),
