@@ -19,7 +19,9 @@ import html
 import json
 import os
 import re
+import sys
 import threading
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -205,6 +207,38 @@ def test_ui_copy_falls_back_when_core_predates_it(core, monkeypatch):
     _, url = core  # catalog None → 404
     monkeypatch.setattr("kettle_tui.client.in_process_payload", lambda: None)
     copy = KettleClient(url=url, token="t").ui_copy()
+    assert copy.source == "fallback"
+    assert copy.text("sweepLabel") == "Finish batch"
+
+
+def test_ui_copy_returns_literals_when_catalog_or_fetch_fails(monkeypatch, tmp_path):
+    """KeyError in the in-process catalog, and a non-client fetch error, stay on literals."""
+    kettle = types.ModuleType("kettle")
+    kettle.__file__ = str(tmp_path / "kettle" / "__init__.py")
+    kettle.__path__ = [str(tmp_path / "kettle")]
+    catalog = types.ModuleType("kettle.uicopy")
+    called = {"n": 0}
+
+    def payload(_static):
+        called["n"] += 1
+        raise KeyError("missing")
+
+    catalog.payload = payload
+    kettle.uicopy = catalog
+    monkeypatch.setitem(sys.modules, "kettle", kettle)
+    monkeypatch.setitem(sys.modules, "kettle.uicopy", catalog)
+
+    copy = KettleClient(demo_mode=True).ui_copy()
+    assert called["n"] == 1
+    assert copy.source == "fallback"
+    assert copy.text("sweepLabel") == "Finish batch"
+
+    def fetch_fails(_self, _path):
+        raise RuntimeError("not a client error")
+
+    monkeypatch.setattr(KettleClient, "_get", fetch_fails)
+    monkeypatch.setattr("kettle_tui.client.in_process_payload", lambda: None)
+    copy = KettleClient(url="http://127.0.0.1:9", token="t").ui_copy()
     assert copy.source == "fallback"
     assert copy.text("sweepLabel") == "Finish batch"
 

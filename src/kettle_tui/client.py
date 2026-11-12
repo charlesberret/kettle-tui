@@ -251,7 +251,7 @@ class KettleClient:
         if not self.demo_mode:
             try:
                 pay = self._get("/api/ui-copy")
-            except ClientError:
+            except Exception:  # noqa: BLE001
                 pay = None
             if isinstance(pay, dict) and isinstance(pay.get("keys"), dict) and pay["keys"]:
                 return UiCopy(pay, source="core")
@@ -746,7 +746,7 @@ class KettleClient:
         err_body: dict[str, Any] = {}
         try:
             err_body = json.loads(e.read().decode("utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except Exception:  # noqa: BLE001, S110
             pass
         return ClientError(
             message=str(err_body.get("error") or e.reason or "http error"),

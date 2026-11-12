@@ -177,7 +177,7 @@ def in_process_payload() -> dict[str, Any] | None:
     try:
         static = Path(kettle.__file__).resolve().parent / "static"
         pay = uicopy.payload(static)
-    except (AttributeError, OSError, TypeError, ValueError):
+    except Exception:  # noqa: BLE001
         return None
     if not isinstance(pay, dict) or not pay.get("keys"):
         return None
