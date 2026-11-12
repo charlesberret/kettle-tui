@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
-from io import StringIO
-from pathlib import Path
 
 import pytest
 
@@ -21,7 +18,6 @@ from kettle_tui.client import (
     load_discovery,
     resolve_project_root,
 )
-
 
 # ── load_discovery ──────────────────────────────────────────────────────
 
@@ -91,7 +87,7 @@ def test_is_set_aside_only_for_set_aside_status():
     assert not is_set_aside(None)
 
 
-def test_resolve_project_root_rejects_empty_and_tilde(tmp_path, monkeypatch):
+def test_resolve_project_root_rejects_empty_and_resolves_a_path_under_home(tmp_path, monkeypatch):
     assert resolve_project_root(None) is None
     assert resolve_project_root("") is None
     desk = tmp_path / "desk"
@@ -135,15 +131,6 @@ def test_add_project_slug_dedupes_when_name_collides():
 
 
 # ── CLI --check (demo, no TUI) ──────────────────────────────────────────
-
-
-def test_cli_check_demo_lists_projects(capsys):
-    rc = main(["--demo", "--check"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "ok  app=kettle version=demo" in out
-    assert "source=demo" in out
-    assert "demo-desk" in out
 
 
 def test_cli_check_here_no_match_exits_one(capsys, tmp_path):

@@ -1,8 +1,5 @@
 # Test gap analysis (kettle-tui)
 
-Sprint pass: map coverage by module, name the riskiest untested behaviour, and add
-tests for the worst gaps without changing product code.
-
 ## Coverage command
 
 From the repo root, with dev dependencies installed:
@@ -66,13 +63,13 @@ Ordered by user impact if the behaviour regressed silently.
 
 ## Gap-filling tests added (this pass)
 
-`tests/test_gap_fill.py` (14 tests) targets gaps **2’s demo cousin**, **8’s demo paths**, **discovery**, **entry/proposal helpers**, **add_project validation**, and **CLI `--check`**:
+`tests/test_gap_fill.py` (13 tests) targets gaps **2’s demo cousin**, **8’s demo paths**, **discovery**, **entry/proposal helpers**, **add_project validation**, and **CLI `--check`**:
 
 - `load_discovery` — flag, discovery file, and default fallback
 - `entry_status` / `is_proposal_entry` / `is_set_aside` / `resolve_project_root`
 - `demo.file_content` basename and unknown-path stub
 - `add_project` requires `root`; demo slug deduplication (`my_app` / `my_app_2`)
-- `main(["--demo", "--check"])` and `--here` miss exit code; `build_parser` `--here` const
+- `--here` miss exit code; `build_parser` `--here` const
 
 Run the new file alone:
 
