@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
+  "ruff>=0.8",
 ]
 
 [project.scripts]
@@ -27,6 +28,10 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# In-flight viewport work on another branch; keep lint clean without editing here yet.
+"src/kettle_tui/app.py" = ["BLE001", "I001", "RUF012", "RUF100", "S110", "SIM102", "SIM103"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
