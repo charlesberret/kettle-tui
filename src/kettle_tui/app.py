@@ -376,13 +376,13 @@ class ComposerArea(TextArea):
     class Submitted(Message):
         """Same surface as Input.Submitted for the app's handler."""
 
-        def __init__(self, composer: "ComposerArea") -> None:
+        def __init__(self, composer: ComposerArea) -> None:
             super().__init__()
             self.composer = composer
             self.value = composer.text
 
         @property
-        def control(self) -> "ComposerArea":
+        def control(self) -> ComposerArea:
             return self.composer
 
     BINDINGS = [
